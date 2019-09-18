@@ -1,0 +1,167 @@
+---
+title: "Comprehensive Exams -- Applied Statistics"
+author: "Zoe Schroder"
+date: "9/16/2019"
+output: html_document
+---
+
+Load libraries: 
+```{r}
+suppressMessages(library(ggplot2))
+suppressMessages(library(dplyr))
+suppressMessages(library(reshape2))
+```
+
+# Variance:
+
+Variance is the measures of how far a set of numbers are spread out from their average value.
+The formula is: 
+$$
+\hbox{var}(x) = \frac{(x_1 - \bar x)^2 + (x_2 - \bar x)^2 + \cdots + (x_n - \bar x)^2}{n-1}
+$$
+
+# Mean: 
+
+The mean is the average calue of a set of numbers defined as: 
+$$
+\bar x = \frac{x_1 + x_2 + \cdots + x_n}{n}
+$$
+The sample mean is a measure of the central tendency of a set of values. Typically there are more values near the mean. This is similar with the median, but the median is more resistent to outliers. The mediann is a `resistant statistic` because it is not greatly influenced by only a few values. 
+
+# Quantiles: 
+
+Quantiles cut a set of ordered data into equal-sized data bins. The ordering comes from rearranging the data from lowest to highest. The first, or lower, quartile corresponding to the .25 quantile (25th percentile), indicates that 25% of the data have a value less than this value. The third, or upper, quartile corresponding to the .75 quantile (75th percentile), indicates that 75% of the data have a smaller value than this value.
+
+The difference between the first and third quartile values is called the interquartile range (IQR). Fifty percent of all values lie within the IQR.
+
+```{r}
+x <- rnorm(n = 10000, 
+           mean = 10, 
+           sd = 100)
+quantile(x, 
+         probs = c(0.05, .25, .5, .75, .95))
+
+IQR(x)
+```
+
+Find location of min and max values in a data frame: 
+```{r}
+Volume = c(20.233, 19.659, 18.597, 18.948, 17.820, 16.736, 16.648, 17.068, 15.916, 14.455, 14.569)
+Year = 2002:2012
+Ice.df = data.frame(Year, Volume)
+
+which.min(Ice.df$Volume)
+which.max(Ice.df$Volume)
+```
+
+# Dplyr: 
+
+Verb        | Description
+-----------:|:-----------
+`select()`    | selects columns; pick variables by their names
+`filter()`    | filters rows; pick observations by their values
+Try this on your thesis stuff lo
+`arrange()`   | re-orders the rows
+`mutate()`    | creates new columns; create new variables with functions of existing variables
+`summarize()` | summarizes values; collapse many values down to a single summary
+`group_by()`  | allows operations to be grouped
+
+For other types of combinations, we need to use Boolean operators: `&` is "and", `|` is "or", and `!` is "not".
+
+```{r}
+filter(airquality, Month == 5 | Month == 9)
+
+df = airquality %>%
+  filter((Month == 8 | Month == 9) & Wind < 5) %>%
+  select(Month, Day, Ozone, Wind, Temp)
+```
+
+# Arrange: 
+
+Arrange the data by a specific column
+```{r}
+# Ascending: 
+airquality %>%
+  arrange((Solar.R))
+
+# Descending
+airquality %>%
+  arrange(desc(Solar.R))
+#### OR ####
+airquality %>%
+  arrange(-Solar.R)
+```
+
+# Melt: 
+
+Sometimes you need to reshape the data. You use the `melt()` function. The ID variable is a vector of a non-measured quantity. 
+
+```{r}
+L = "http://myweb.fsu.edu/jelsner/temp/data/FLprecip.txt"
+FLp = read.table(L, na.string = "-9.900", 
+                 header = TRUE)
+
+FLpL = melt(FLp, id.vars = "Year")
+head(FLpL)
+ggplot(FLpL, aes(x = variable, y = value)) + 
+  geom_boxplot() +
+  xlab("Month") + 
+  ylab("Precipitation (in)")
+```
+
+# Correlation
+
+A scatter plot is a graphical representation of the correlation. The corrlation describes the linear relationship between two variables witha  single number. The correlation computed on a set of data values a statistic. It describes whether larger- and smaller-than-average values of one variable are related to larger- or smaller-than-average values of the other variable.  If larger than average values of one variable tend to be associated with larger than average values of the other variable then the correlation is positive. These values range betweenn -1 and +1 
+
+Pearson correlation
+$$
+r = \frac{1}{n-1} \sum \left(\frac{x_i - \bar x}{s_x}\right)\left(\frac{y_i - \bar y}{s_y}\right)
+$$
+where $n$ is the sample size, $\bar x$ and $\bar y$ are the average of the x and y variables, respectively and $s_x$ and $s_y$ are the standard deviation of the x and y variables.
+
+```{r}
+cor(FLp$Jan, FLp$Feb)
+```
+
+
+geom_smooth(method = lm, se = FALSE) + #linear trend line
+geom_smooth(se = FALSE, color = "red") #nonlinear trend line
+
+Spearman Rank Correlation: 
+
+Spearman rank correlation is a nonparametric measure of the rank correlation (statistical dependence between the rankings of two variables.) This correlation is less sensitive than the Pearson correlation to strong outliers that are in the tails of both samples (Spearman's rho is limited to the value of the rank). High correlation between two variables indicates a similar rank. 
+
+```{r}
+cor(FLp$Jan, FLp$Feb, method = "spearman")
+```
+
+
+
+
+
+
+
+
+
+Facet_wrap: 
+```{r}
+ggplot(kid.weights, aes(x = height, y = weight)) + 
+  geom_point() + 
+  facet_grid(~ gender)
+```
+
+
+Make a fully detailed figure: 
+```{r}
+
+```
+
+
+Lesson 7 -- Quantitative Geography for boxplots by month. 
+
+
+
+
+
+
+
