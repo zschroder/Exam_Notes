@@ -1,5 +1,5 @@
 ---
-title: "Applied Spatial Statistics"
+title: "Applied Spatial Statistics Notes"
 author: "Zoe Schroder"
 date: "9/16/2019"
 output: html_document

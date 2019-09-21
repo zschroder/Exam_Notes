@@ -11,6 +11,12 @@ suppressMessages(library(ggplot2))
 suppressMessages(library(dplyr))
 suppressMessages(library(reshape2))
 suppressMessages(library(ISwR))
+suppressMessages(library(scatterplot3d))
+suppressMessages(library(GGally))
+suppressMessages(library(foreign))
+suppressMessages(library(msm))
+suppressMessages(library(interplot))
+suppressMessages(library(sm))
 ```
 
 # Variance:
@@ -442,7 +448,7 @@ The next line of output gives the multiple R-squared value. Also called the coef
 
 The multiple R-squared = 1 - SSE/SSY, where SSE is the sum of the squared residuals (residual sum of squares--RSS) and SSY is the total variation about a constant mean response.
 
-It is useful to see how these are computed. The SSE is the sum of the squared residuals. This is computed with the `deviance()` function.
+It is useful to see how these are computed. The SSE is the sum of the squared residuals. This is computed with the `deviance()` function. Smaller deviance means a better model. 
 ```{r}
 SSE = sum(resid(model)^2)
 SSE
@@ -504,24 +510,481 @@ predict(model, data.frame(Age = c(50, 60)),
         level = .95, interval = "prediction")
 ```
 
+# Model Adequacy
+
+By definition the regression line is the best fit line through the data. However the best fit line may not be an adequate model for your data. 
+
+Model adequacy is about the quality of the inferences you can make with the model. It says nothing about the strength of the relationship between the response and explanatory variable. Checks on model adequacy alert you to where/how the model can be improved (e.g., transform the data, use a nonlinear term, etc.).
+
+What do I mean by an inference from the model? 
+
+When we infer something about nature or human behavior with our linear regression model we are making four assumptions. All four assumptions imply that the residuals should 'look' a certain way, or equivalently that the distribution of Y (response variable) conditional on X (explanatory variable) should look a certain way.
+
+* Linearity: Average values of Y in ordered intervals of X should be a straight-line function of X. Each interval creates a 'sub-population' of Y values. 
+* Constant variance: Sub-populations of Y should all have the same standard deviation.
+* Normality: Values from each sub-population can be described by a normal distribution.
+* Independence: Each observation is independent from the other observations.
+
+To the extent these assumptions are valid, the model is said to be *adequate* in representing our data. A model can be statistically significant, but not adequate.
+
+The first three assumptions are best examined using graphs. Note: We never prove an assumption is valid. We check to see if there is evidence to question its validity.
+
+Consider the `cars` data frame. The data contains two columns `speed` and `dist` giving the speed (mph) and the corresponding distance (ft) needed to stop. The data were recorded in the 1920s.
+```{r}
+cor(cars$speed, cars$dist)
+```
+
+The correlation tells us there is a strong relationship between the two variables. The faster the car is moving, the more distance it needs to come to a stop.
+
+We are interested in the breaking distance given the forward speed so `dist` is our response variable. Next we make a scatter plot.
+```{r}
+ggplot(cars, aes(x = speed, y = dist)) + 
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) +
+  xlab("Speed (mph)") + ylab("Break Distance (ft)")
+```
+
+The scatter of points shows an apparent linear relationship between the breaking distance and the forward speed of the car for this sample of data.
+
+Fit a regression model to the data. Since distance is our response variable, we state that we regress stopping distance onto forward speed.
+```{r}
+model1 = lm(dist ~ speed, data = cars)
+summary(model1)
+```
+
+ALWAYS Y ON TO X: Observed - fitted = residual
+
+The model indicates a statistically significant relationship ($p$-value is less than .01) between breaking distance and speed. In fact, 65% of the variation in average breaking distance is associated with differences in speed.  
+
+The statistically significant effect of speed on breaking distance suggests it is unlikely in the population of cars that there is no relationship between speed and breaking distance.
+
+The model looks pretty good, so we write up our results and we are done. Not so fast, let's take a closer look.
+
+There tends to be more values of breaking distance below the line than above the line over the range of speeds between 10 & 20 mph. Also, the spread of the residuals appears to get larger as speed increases. There is more variation in the response for larger values of speed.
+
+*Assumption of Linearity and Constant Variance: *
+One way to see this is to divide the explanatory variable into non-overlapping intervals and display the set of corresponding response values as a box plot. The variable is divided using the `cut()` function. Here we cut the `speed` into 5 intervals.
+```{r}
+cut(cars$speed, breaks = 5)
+cars$speed[1]
+```
+
+The first value of `speed` is 4 mph and it falls in the interval (3.98, 8.2]. Greater than 3.98 and less than or equal to 8.2. And so on.
+
+We can use the output of the `cut()` function as an argument in the `aes()` function to draw side by side box plots.
+```{r}
+ggplot(cars, aes(x = cut(speed, breaks = 5), y = dist)) + 
+  geom_boxplot() +
+  xlab("Speed (mph)") + 
+  ylab("Break Distance (ft)")
+```
+
+In effect we are creating sub-populations. The population of response values within a given interval of the explanatory variable. The number of intervals is the number of breaks specified by the `cut()` function.
+
+Here we see `evidence against the assumption of linearity`. Further we see that the box size is increasing. That is the IQR range of breaking distance is larger for faster moving cars. This creates `doubt on the assumption of constant variance`.`
+
+*Assumption of Normality: *
+What about the assumption of normality? Although the normality assumption about the residuals is that the *conditional* distribution of the residuals at each $x_i$ is adequately described by a normal distribution, with sample data there usually are not enough observations at each value of $X$ to check.
+
+In practice it's common to examine the residuals all together. The residuals are obtained by using the `resid()` (extractor) function.
+```{r}
+res = resid(model1)
+res
+```
+
+There are other extractor functions (like `coef()`) that output information from the model as vectors or matrices.
+
+The `fortify()` function from the **ggplot2** package makes a data frame from information contained within the model object using several of the extractor functions.
+```{r}
+model.df = fortify(model1)
+head(model.df)
+```
+
+Among other information, the data frame contains a column labeled `.resid` containing the vector of residuals. The residuals are obtained by substracting the observed distance from the fitted distance (`dist` column minus `.fitted` column).
+
+A histogram and density of the model's residuals is obtained by typing
+```{r}
+ggplot(model.df, aes(.resid)) +
+  geom_histogram(bins = 8, color = "white") +
+  geom_freqpoly(bins = 8)
+```
+
+We see that the histogram is not symmetric. There are more values to the right of the central set of values than to the left. The validity of the normality assumption is under question.
+
+Since departures from normality can occur simply because of sampling variation, the question arises as to whether that apparent skewness we see in this set of residuals is significantly larger than expected by chance.
+
+One approach to visualizing the expected variation from a reference distribution is to superimpose an uncertainty band on the density plot.  
+
+The `sm.density()` function from the **sm** package provides a way to plot the uncertainty band. The first argument is a vector of residuals and the argument `model = "Normal"` draws a band around a normal distribution centered on zero with a variance equal to the variance of the residuals.
+```{r}
+#install.packages("sm")
+library(sm)
+sm.density(res, model = "Normal")
+```
+
+The black curve representing the model residuals is shifted left relative to a normal distribution and goes outside the blue band in the right tail indicating that the residuals may not be adequately described by a normal distribution although deviation from normality is not large.
+
+In summary, our linear regression model may not be adequate. The assumptions of linearity, equal variance, and normally distributed residuals are not entirely reasonable for these data.
+
+*The Model in Inadequate!*
+
+# Adjust the model: 
+What should we do? The relationship appears to be non-linear. So we use the square root of the breaking distance as the response variable instead.
+```{r}
+ggplot(cars, aes(x = speed, y = sqrt(dist))) + 
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) +
+  xlab("Speed (mph)") + 
+  ylab(expression(sqrt("Break Distance (ft)")))
+```
+
+Let's fit another model. First make a copy of the original data frame and add a column called `distSR`. Check the assumption of linearity.
+```{r}
+cars2 = cars
+cars2$distSR = sqrt(cars$dist)
+
+ggplot(cars2, aes(x = cut(speed, breaks = 5), y = distSR)) + 
+  geom_boxplot() +
+  xlab("Speed (mph)") + 
+  ylab("Square Root of Break Distance (ft)")
+```
+
+Looks good.
+
+Fit the new model and extract and make a histogram of the residuals.
+```{r}
+model2 = lm(distSR ~ speed, data = cars2)
+res2 = resid(model2)
+
+model2.df = fortify(model2)
+ggplot(model2.df, aes(.resid)) +
+  geom_histogram(bins = 8, color = "white") +
+  geom_freqpoly(bins = 8)
+```
+
+Distribution of residuals is still skewed but it is better.
+```{r}
+sm.density(res2, model = "Normal")
+```
+Another check is to use the quantile-quantile plot. A quantile-quantile plot (or Q-Q plot) is a graph of the quantiles of one distribution against the quantiles of another distribution.  If the distributions have similar shapes, the points on the plot fall roughly along the straight line.
+
+To check the normality assumption of a regression model you want to compare the quantiles of the residuals against the quantiles of a normal distribution. We do that with the `qqnorm()` function.
+```{r}
+qqnorm(res2)
+qqline(res2)
+```
+
+Departures from normality are seen as a systematic departure of the points from a straight line on the Q-Q plot.Interpreting Q-Q plots is somewhat visceral. Here are the common situations.
+
+Description: interpretation
+
+* All but a few points fall on a line: outliers in the data
+* Left end of pattern is below the line; right end of pattern is above the line: long tails at both ends of the distribution
+* Left end of pattern is above the line; right end of pattern is below the line: short tails at both ends of the data distribution
+* Curved pattern with slope increasing from left to right: data is skewed to the right
+* Curved pattern with slope decreasing from left to right: data is skewed to the left
+* Staircase pattern (plateaus and gaps): data have been rounded or are discrete
+
+# Model Transformations
+
+Square root
+  * Limitations
+    + Cannot be applied to negative numbers
+    + Transforms numbers < 1 and > 1 in different ways
+    
+Logarithm
+  * Based 10 or based $e$ (natural logarithm)
+  * Appropriate
+    + When the SD of the residuals is directly proportional to the fitted values (and not to some power of the fitted values)
+    + When the relationship is close to exponential
+  * Limitations
+    + How to transform zero values?
+      - Add a constant such as 1 or 0.00001
+      - Remove zero values from analysis
+      
+Others
+  *Box-Cox Transformation
+  (http://stackoverflow.com/questions/26617587/finding-optimal-lambda-for-box-cox-transform-in-r)
+
+Be careful transforming count data. Use a different type of regression.
+
+# Regression models make a series of assumptions.
+
+* Before accepting a model you need to examine those assumptions to make sure they are tenable.
+* The model fit may be excellent, but you can't be sure your conclusions are correct unless you evaluate the tenability of the assumptions.
+* The key to evaluating the regression assumptions are the model residuals.
+
+# Regression modeling is statistical control.
+
+* You often want to do more than just summarize the relationship between variables.
+* Regression provides a strategy to control for effects of an explanatory variable to see what is left over.
+* These left-overs or residuals are interpreted as "controlled observations" (e.g. percent income controlling for percent graduates).
+
+# Outliers can distort regression results or can be interesting on their own.
+
+* Inspect scatter plots and plots of residuals to determine whether there are any unusual values that might unduly influence the regression line.
+* If you find outliers, re-fit the regression model sans those observations and compare results.
+* Regardless of how you decide to handle the outliers, let your readers know about them.
+
+# Multiple Regression 
 
 
+We regress the response variable onto the explanatory variables. And when we describe what we did we don't say we performed a regression of my variables or we regressed y AND x. Or we regressed y with respect to x. These are ambiguous at best.
+
+Examples: Regression of ozone concentration on air temperature, wind speed, and radiation; regression of voting preference on income, education and location; regression of exam scores on homework grade and seat location; regression of mammal brain size on body weight and gestation period; regression of mortality rates on family income, race, and location.
+
+Everything from bi-variate regression carries over to multiple regression. Each explanatory variable contributes a term to the model. There is a slope coefficient for each explanatory variable. That slope coefficient multiplied by the corresponding explanatory variable is called a term. 
+
+With one explanatory variable the regression model is described by a straight line. With two explanatory variables it is described by a flat plane.  
+
+To see this we graph a three dimensional scatter plot with the `scatterplot3d()` from the **scatterplot3d** package and add the regression plane. The example comes from the `trees` data frame. We start with a bi-variate regression. We regress lumber volume (`Volume`) on tree girth (`Girth`) and add the model as a line on the scatter plot.
+
+```{r}
+model1 = lm(Volume ~ Girth, data = trees)
+plot(trees$Volume ~ trees$Girth, pch = 16, 
+     xlab = "Tree diameter (in)", 
+     ylab = "Timber volume (cubic ft)")
+abline(model1)
+```
+
+The `plot()` method and `abline()` are base R graphics functions. Next we regress lumber volume (`Volume`) on girth (`Girth`) and height (`Height`). Use the `scatterplot3d` function to plot the scatter of points in pseudo-3d. The resulting `plane3d` function takes the regression model and adds the plane (with a grid).
+```{r}
+model2 = lm(Volume ~ Girth + Height, data = trees)
+s3d = scatterplot3d(trees, angle = 55, scale.y = .7, pch = 16, 
+                    xlab = "Tree diameter (in)", 
+                    zlab = "Timber volume (cubic ft)",
+                    ylab = "Tree height (ft)")
+s3d$plane3d(model2)
+```
+
+We can see that lumber volume increases with tree diameter and tree height. By changing the view angle (`angle =` argument) we can see that some observations are above the plane and some are below.
+```{r, eval=FALSE}
+s3d = scatterplot3d(trees, angle = 32, scale.y = .7, pch = 16, 
+                    xlab = "Tree diameter (in)", 
+                    zlab = "Timber volume (cubic ft)",
+                    ylab = "Tree height (ft)")
+s3d$plane3d(model2)
+```
+
+The distance along the vertical axis from the observation to the model plane is the residual.
+
+With more than two explanatory variables the model is described by a hyper plane but the math is the same. The multiple regression model is given by: 
+
+$$
+y_i = \beta_0 + \beta_1 \cdot x_{i1} + \beta_2 \cdot x_{i2} + \cdots + \beta_p \cdot x_{ip} + \varepsilon_i
+$$
+
+The explanatory variables (there are $p$ of them) are written with a double subscript to indicate the observation number (1st subscript) and the variable number (2nd subscript).Each explanatory variable gets a coefficient, so there are $p+1$ of them when we include $\beta_0$. The $_i$ on the explanatory variables indicates the change in the observations (i.e. $i^th$ row in the dataset).There is a single response variable $y_i$ and a single set of residuals $\varepsilon_i$. The residuals are assumed to be described by a set of normal distributions each centered on zero and having the same variance ($\sigma^2$).
+
+Fit a multiple regression model:
+
+```{r}
+PC.df = read.table("http://myweb.fsu.edu/jelsner/temp/data/PetrolConsumption.txt", header = TRUE)
+head(PC.df)
+```
+
+```{r}
+ggpairs(PC.df)
+```
 
 
+We fit a multiple regression model to the petrol data as follows:
+```{r}
+model1 = lm(Petrol.Consumption ~ Prop.DL + Pavement + 
+            Avg.Inc + Petrol.Tax, data = PC.df)
+model1
+```
+
+Gasoline consumption increases with the proportion of drivers and decreases with the amount of pavement, average income and gas tax. Why might gas consumption decrease with increasing income?
+
+The equation for the model is: Average petrol consumption [millions of gallons] = 377.3 + 1336 * Prop.DL – 0.0024 * Pavement – 0.06659 * Avg.Inc – 34.79 * Petrol.Tax
+
+The statistically significant variables in explaining petrol consumption are found by looking at the table of coefficients output from the `summary()` function.
+```{r}
+summary(model1)
+```
+The larger the p value the less important it is for the model
+estimate: same units as responnse divided by explanatory
 
 
+We see from the table of coefficients that `Pavement` is not significant.
+
+The null hypothesis is that the variable is NOT important to the model. The $p$-value is evidence in support of the null hypothesis. The larger the $p$-value the more evidence you have that the variable is not important to the model.  
+
+Magnitudes of the coefficient estimates (effect sizes) cannot be compared directly because they have different units. A regression coefficient has units of the response variable divided by the units of the explanatory variable.
+
+However the magnitude of the $t$-values are comparable. They are coefficients that have been *standardized* by dividing by the corresponding standard error. Accordingly, `Avg.Inc` is more more important than Petrol.Tax even though .0666 is much smaller than 34.79.
+
+The model says that for every 1 percentage point increase in the proportion of drivers (to overall population), the mean petrol consumption increases by 1.34 billion gallons assuming `Pavement`, `Avg.Inc` and `Petrol.Tax` are constant. 
+
+For every 1 cent/gallon increase in taxes, mean petrol consumption decreases by 34.8 million gallons assuming the three other variables are held constant.
+
+The order of the explanatory variables does not change the magnitude or the sign of the slope coefficients.
+```{r}
+summary(lm(Petrol.Consumption ~ Pavement + Petrol.Tax + 
+           Avg.Inc + Prop.DL, data = PC.df))
+```
+
+`Simplify the model`
+
+Can the model be simplified. We try a simpler model by removing `Pavement` (the variable not statistically significant).
+```{r}
+model2 = lm(Petrol.Consumption ~ Prop.DL + Avg.Inc + 
+              Petrol.Tax, data = PC.df)
+summary(model2)
+```
+
+The remaining explanatory variables in the model are all significant. The values are slightly different as the variance in the gas consumption attributed to `Pavement` is now spread across the remaining variables. Removing an explanatory variable changes the values of the parameters remaining in the model.
+
+The proportion of the population with licenses is the most important variable as can be seen by having the largest $t$ value (in absolute value).
+
+By removing a variable the R-squared statistic DECREASES to .675. This is always the case with a smaller model (fewer explanatory variables). Thus the R-squared statistic should not be used to compare models unless the models have the same number of explanatory variables.  
+
+**NOTE: R squared always decreases when removing variables even if not important so adjusted R squared is much better because it increases only if the variable removed improves the model**
+
+Model assumptions
+
+We need to check the model assumptions. Equal variance. We saw how to check this assumption by using the `cut()` function and creating side-by-side box plots. Another way to check this assumption is to plot the standardized residuals on the vertical axis and the fitted values along the horizontal axis. Adding a smoothed curve and the y equal zero line makes it easy to see whether there is a pattern to the residuals.
+```{r}
+model2.df = fortify(model2)
+ggplot(model2.df, aes(x = .fitted, y = .stdresid)) +
+  geom_point() +
+  geom_smooth() +
+  geom_hline(yintercept = 0)
+```
+
+In this case: no.
+
+Normality. First we use the `sm.density()` function.
+```{r}
+res = residuals(model2)
+sm.density(res, xlab = "Model Residuals", model = "Normal")
+```
+
+We also examine a quantile-normal plot.
+```{r}
+qqnorm(model2$residuals)
+qqline(model2$residuals)
+```
+
+With either of these plots we see some evidence against normality and constant variance. The fact that the residuals do not exactly follow a normal distribution lowers the confidence we can place on our inferences.
+
+To improve model adequacy we might transform the response variable or use a weighted regression model. We will talk about transforming a response variable on Thursday and weighted regression is considered later in the context of geographic regression.
+
+# Interaction between two continuous variables in a Multiple Regression
+
+```{r}
+scores.df = read.dta("https://stats.idre.ucla.edu/stat/data/hsbdemo.dta")
+```
+
+The data includes the following measurements on 200 students: 
+
+* Standardized reading test score 
+* Standardized writing test score
+* Standardized social economic status (socst)  
+
+We regress reading score onto writing score and socio-economic status.
+```{r}
+model1 = lm(read ~ write + socst, 
+            data = scores.df)
+summary(model1)
+```
+
+We find writing skill helps reading skill as does social economic status.
+
+But maybe the story is more complicated. Reading and writing scores depend on school quality, which is a function of social economic status. Thus it would be surprising if the RELATIONSHIP between reading and writing scores is independent of social economic status.
+
+To check this possibility, first create a new categorical variable and then make a conditional scatter plot.
+```{r}
+scores.df2 = scores.df %>%
+  mutate(socst2 = cut(socst, 2))
+ggplot(scores.df2, aes(y = read, x = write, color = factor(socst2))) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) +
+  xlab("Writing Score") +
+  ylab("Reading Score")
+```
+
+The slopes cross so we should check for an interaction.
+
+Adding an interaction term tells another story.
+```{r}
+model2 = lm(read ~ write + socst + write:socst, 
+            data = scores.df)
+summary(model2)
+```
+
+The interaction term is significant. How do we interpret it? As social economic status increases the relationship between writing and reading skill increases (larger slope). Mathematically
+$$
+y_i = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \beta_3 (x_1 \cdot x_2) + \varepsilon_i
+$$
+
+Let $x_2 = c$ (let social economic status be constant), then the effect of $x_1$ is
+$$
+y_i = \beta_0 + \beta_1 x_1 + \beta_2 \cdot c + \beta_3 (x_1 \cdot c) + \varepsilon_i \\
+y_i = (\beta_0 + c \beta_2) + (\beta_1 + c \cdot \beta_3) x_1 + \varepsilon_i
+$$
+
+avg reading = 49.8 - .362 * write - .398 * socst + .015 * write * socst + e
+
+* When socst = 26, a one unit increase in writing produces a (-.362 + 26 * .015) = .028 unit increase in avg reading.
+* When socst = 71, a one unit increase in writing produces a (-.362 + 71 * .015) = .703 unit increase in avg reading.
+
+A plot of the conditional coefficient is made with the `interplot()` function from the **interplot** package. The model object is given along with the names of the interacting variables as character strings. The function uses the grammar of graphics structure so we can add layers as before.
+```{r}
+interplot(m = model2, var1 = "socst", var2 = "write") +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    xlab("Social Economic Status") +
+    ylab("Coefficient on Writing Score") +
+    theme_bw() 
+```
+If a non interactive model it would be a flat line. Therefore, we have a significant interaction.
 
 
+The plot is a visualization of the interaction. There is a significant upward trend on the writing score coefficient as a function of social economic status. The 95% uncertainty band on the interaction is given in gray.
 
+The coefficient of writing is clearly conditioned by social economic status. Note: This also means that the coefficient of social economic status is conditioned by writing in a symmetric way.
 
+# Collinearity
 
+This is an indication of collinearity. The large between-variable correlation leads to a model that may not make physical sense. The rule is that when the correlation between two explanatory variables exceeds .6, collinearity can be a problem.  
 
+When explanatory variables have large correlation then estimates of the model parameters are not precise. A model with imprecise parameter estimates is not useful. The best way to proceed in this situation is to reduce the set of explanatory variables. 
 
+# Akaike Information Criterion
 
+Another useful statistic in this regard is called AIC (Akaike Information Criterion). AIC is more general and can be used with models that are fit with methods other than least-squares minimization.
 
+AIC is rooted in information theory. Values of AIC provide a means for model selection in a relative sense. If all candidate models fit poorly the AIC is not much help.
 
+AIC = $2 k - 2 \log(L)$, where k is the number of model parameters (1 + number of explanatory variables) and L is the highest value from the likelihood function. The likelihood function (likelihood) is the probability of your data given the model.
 
+AIC rewards goodness of fit, but includes a penalty that is an increasing function of the number of estimated parameters. Given a set of candidate models for our data, we should choose the one with the lowest AIC. 
 
+use the `drop1()` function, which takes a regression model object and returns a table showing what happens when each variable is removed from the model.
+```{r}
+modelF = lm(Petrol.Consumption ~ Prop.DL + Pavement + Avg.Inc + Petrol.Tax, 
+            data = PC.df)
+drop1(modelF)
+```
+
+The first row also gives the AIC value for the full model. Here 407.37. The model deviance has units of the response variable. The AIC has no units.
+
+The next row tells us what happens to the RSS if the explanatory variable Prop.DL is removed from the full model. If we drop the `Prop.DL` variable from the full model, the RSS increases to 401405 (from 189050) and we gain one degree of freedom (less bias).
+
+Said another way, the value of 212355 in the `Sum of Sq` column indicates how much the variable `Prop.DL` is worth to the model. By removing it the RSS increases from 189050 to 401405; a difference of 212355.
+
+Apparently that is too much of an increase in RSS for the gain of only 1 degree of freedom as the AIC increases from 407 to 442. Said another way, the AIC is 407 for the full model. In comparison, the AIC is 442 for a model that is otherwise the same but missing `Prop.DL`.
+
+The next row gives the same information about the `Pavement` variable. That is, what happens to the RSS from the full model when the variable `Pavement` is removed.
+
+Here the RSS increases by 2252 to 191302 (the residuals on average get a bit larger), but this increase is worth it as it only costs one degree of freedom. This is indicated by a reduction in the AIC to so 405.94. 
+
+The AIC column keeps score. The AIC for the model having all the explanatory variables is 407.37. A model without `Prop.DL` has an AIC of 441.51, which is LARGER than the AIC for the full model so we keep `Prop.DL` in the model.
+
+On the other hand, a model without `Pavement` has an AIC of 405.94, which is SMALLER than the AIC for the full model so we remove `Pavement` from the model.
+
+So we simply compare the AIC values for each variable against the AIC value for the full model. If the AIC value for a variable is less than the AIC for the full model then the trade-off is in favor of removing it.
 
 
 
