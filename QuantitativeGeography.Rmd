@@ -17,6 +17,15 @@ suppressMessages(library(foreign))
 suppressMessages(library(msm))
 suppressMessages(library(interplot))
 suppressMessages(library(sm))
+suppressMessages(library(pROC))
+suppressMessages(library(spgwr))
+suppressMessages(library(spdep))
+suppressMessages(library(tidyverse))
+suppressMessages(library(spdep))
+suppressMessages(library(quantreg))
+suppressMessages(library(MASS))
+suppressMessages(library(rgdal))
+suppressMessages(library(RColorBrewer))
 ```
 
 # Variance:
@@ -80,7 +89,7 @@ filter(airquality, Month == 5 | Month == 9)
 
 df = airquality %>%
   filter((Month == 8 | Month == 9) & Wind < 5) %>%
-  select(Month, Day, Ozone, Wind, Temp)
+  dplyr::select(Month, Day, Ozone, Wind, Temp)
 ```
 
 # Arrange: 
@@ -154,7 +163,6 @@ ht = c(177, 180, 179, 174, 192, 186, 165, 183)
 ht.df = data.frame(Student = 1:length(ht), 
                    Height = ht)
 
-library(ggplot2)
 ggplot(ht.df, aes(x = "", y = Height)) + 
   geom_boxplot() +
   ylab("Height (cm)") +
@@ -617,8 +625,6 @@ One approach to visualizing the expected variation from a reference distribution
 
 The `sm.density()` function from the **sm** package provides a way to plot the uncertainty band. The first argument is a vector of residuals and the argument `model = "Normal"` draws a band around a normal distribution centered on zero with a variance equal to the variance of the residuals.
 ```{r}
-#install.packages("sm")
-library(sm)
 sm.density(res, model = "Normal")
 ```
 
@@ -951,6 +957,9 @@ This is an indication of collinearity. The large between-variable correlation le
 
 When explanatory variables have large correlation then estimates of the model parameters are not precise. A model with imprecise parameter estimates is not useful. The best way to proceed in this situation is to reduce the set of explanatory variables. 
 
+Use the `cor()` function. 
+
+
 # Akaike Information Criterion
 
 Another useful statistic in this regard is called AIC (Akaike Information Criterion). AIC is more general and can be used with models that are fit with methods other than least-squares minimization.
@@ -987,15 +996,2144 @@ On the other hand, a model without `Pavement` has an AIC of 405.94, which is SMA
 So we simply compare the AIC values for each variable against the AIC value for the full model. If the AIC value for a variable is less than the AIC for the full model then the trade-off is in favor of removing it.
 
 
+# Removing Variables from a model: 
+
+When we have all variables in the model the R squared value is maximized. The cost of each variable is model bias. The model is biased toward the particular set of data. That is, it may not generalize to another sample of data. Therefore it is less useful for inference (e.g., prediction).
+
+By dropping a variable we pick up one degree of freedom thus making the model less biased. But by dropping a variable we decrease the variance explained (R squared value gets smaller).
+
+Simply, we favor a model that has the largest adjusted R squared. If the adjusted R squared gets smaller after we remove a variable, then we put it back in the model.
+
+Another useful statistic is called AIC (Akaike Information Criterion). AIC is more general and can be used with models that are fit with methods other than least-squares minimization.
+
+AIC is rooted in information theory. Values of AIC provide a means for model selection in a relative sense. If all candidate models fit poorly the AIC is not much help.
+
+AIC = $2 k - 2 \log(L)$, where k is the number of model parameters (1 + number of explanatory variables) and L is the highest value from the likelihood function. The likelihood function (likelihood) is the probability of your data given the model.
+
+AIC rewards goodness of fit with low values for AIC, but includes a penalty that is an increasing function of the number of explanatory variables. Given a set of candidate models for our data, we should choose the one with the lowest AIC. 
+
+```{r}
+PC.df = read.table("http://myweb.fsu.edu/jelsner/temp/data/PetrolConsumption.txt", 
+                   header = TRUE)
+
+modelFull = lm(Petrol.Consumption ~ Prop.DL + Pavement + Avg.Inc + Petrol.Tax, 
+               data = PC.df)
+
+drop1(modelFull)
+```
+
+The first row also gives the AIC value for the full model. Here 407.37. Model deviance has units of the response variable. The AIC has no units (dimensionless).The next row tells us what happens to the RSS if the explanatory variable `Prop.DL` is removed from the full model. If we drop the `Prop.DL` variable from the full model, the RSS increases to 401405 (from 189050) and we gain one degree of freedom (less bias).Said another way, the value of 212355 in the `Sum of Sq` column in the `Prop.DL` row indicates how much the variable `Prop.DL` is worth to the model. By removing it, RSS increases from 189050 to 401405; a difference of 212355.Apparently that is too much of an increase in RSS for the gain of only one degree of freedom as the AIC increases from 407 to 442. Said another way, the AIC is 407.37 for the full model. In comparison, the AIC is 441.51 for a model that is otherwise the same but missing `Prop.DL`.
+    ** if you remove prop dl the aic goes up. not good. **
+
+The next row gives the same information about the `Pavement` variable. That is, what happens to the RSS from the full model when the variable `Pavement` is removed.
+  ** remove pavement from the model**
+
+Here the RSS increases by 2252 to 191302 (the residuals on average get a bit larger), but this increase is worth it as it only costs one degree of freedom. This is indicated by a reduction in the AIC to so 405.94. The AIC column keeps score. The AIC for the model having all the explanatory variables is 407.37. A model without `Prop.DL` has an AIC of 441.51, which is LARGER than the AIC for the full model, so we keep `Prop.DL` in the model.On the other hand, a model without `Pavement` has an AIC of 405.94, which is SMALLER than the AIC for the full model, so we remove `Pavement` from the model. So we simply compare the AIC values for each variable against the AIC value for the full model. If the AIC value for a variable is less than the AIC for the full model then the trade-off is in favor of removing it.
+
+# Stepwise Regression
+
+Stepwise regression is a procedure (not a model) to automate this procedure of selecting a final model. It is method for finding the best model from a set of candidate models when the models are nested. It is useful for sifting through a large number of explanatory variables.
+
+Stepwise regression can be done by backward deletion of variables or by forward selection of the variables. Backward deletion amounts to automating the `drop1()` function and forward selection amounts to automating the `add1()` function.
+
+Both `drop1()` and `add1()` use the AIC as a criterion for choosing. To see it work, return to your full model explaining gasoline consumption.
+```{r}
+step(modelFull)
+```
+
+Another example: 
+
+We are interested in regressing stack loss onto air flow, water temperature, and acid concentration.
+```{r}
+modelFull = lm(stack.loss ~ ., 
+               data = stackloss)
+```
+
+The period after the tilde will include all the columns (remaining) in the data frame as explanatory variables.
+
+```{r }
+step(modelFull)
+```
+
+Backward deletion of variables is the default in the `step()` function. That is a successive application of the `drop1()` function. In the case of having a large number of explanatory variables it's a good idea to also try forward selection to see if the results are the same.
+
+# Transforming a Response Variable: 
+
+Example: Let's return to the pollution dataset. The data are in the file *pollute.txt*.
+```{r}
+pollute.df = read.table("http://myweb.fsu.edu/jelsner/temp/data/pollute.txt", 
+                     header = TRUE)
+head(pollute.df)
+```
+
+The data contain pollution levels for 41 cities. Interest is in a model that can predict pollution using the variables average temperature, the amount of industry, the population, the average wind speed, the amount of rain, and the number of wet days.
+
+We start with a histogram and density plot of the response variable `Pollution`.
+```{r}
+ggplot(pollute.df, aes(Pollution)) + 
+  geom_histogram(binwidth = 10)
+```
+
+```{r}
+sm.density(pollute.df$Pollution, 
+           model = "Normal")
+```
+
+The response variable `Pollution` (SO2 concentration in ppm) is not well described by a normal distribution. We can still use linear regression, but your inferences might not be strictly valid. One option is to transform the variable to make the distribution more normal. 
+
+Raising a variable $y$ to some power is most common. Box and Cox (1964) suggested a family of transformations, called the power transformations, to make the data better conform to a normal distribution.
+$$
+y_\lambda' =  \frac{y^\lambda-1}{\lambda} 
+$$
+
+The particular transformation depends on the value of $\lambda$. The choice of which value to use is determined using the `boxcox()` function from the **MASS** package. The first argument is a `lm()` formula. Also needed are the data and a sequence of potential value for $\lambda$ (`lambda`). Here we are interested in the response variable `Pollution` without any explanatory variables so the model formula is `Pollution ~ 1`.
+```{r}
+boxcox(Pollution ~ 1, 
+       data = pollute.df,
+       lambda = seq(-1, 1, length = 10))
+```
+We want to look at pollution independent of the other variables. 
+
+
+The output is a plot of the likelihood as a function of possible values for $lambda$. The likelihood represents the chance of observing the data given the tranformation and the normal distribution as the model. Choose the `lambda` that maximizes the likelihood. 
+
+$\lambda$ is a random variable and thus the 95% uncertainty interval provides a range of values. Here the log-likelihood is maximized between -.75 and .2.
+
+Create a new variable (`Pollution2`) that is the transformed `Pollution` variable (with lambda = -.25 in the above formula).
+```{r}
+Pollution2 = pollute.df$Pollution^(-.25)
+sm.density(Pollution2, model = "Normal")
+```
+
+The variable `Pollution2` can be described by a normal distribution. 
+
+More precisely the concern is the distribution of the model residuals. It doesn't really matter the distribution of the response. The normality assumption undergriding accurate inferences made with the model is that the distribution of residuals are described by a normal distribution.
+
+To determine the appropriate Box-Cox transformation on your response variable so that the model residuals can be described as normal use the model formula.
+```{r}
+boxcox(Pollution ~ Temp + Industry, 
+       data = pollute.df,
+       lambda = seq(-1, 1, length = 10))
+```
+** What is the best fittinng model where assumptions of normality are the best? boxcoxx. What is the power distribution of the dataset? the other one **
+
+Create a transformed response variable using the Box-Cox transformation with `lambda = -.2`. Then refit the model. The transformed variable improves the assumption of linearity as well.
+
+# Regression Trees and Random Forrests (L14)
+
+Linear regression is a model for the conditional mean. A regression tree is an alternative way to model the conditional mean. Output from a regression tree is easier to interpret. If the response variable is categorical then the regression tree is called a classification tree (read more in Lesson 15). Regression trees are also called decision trees.A regression (decision) tree is a series of decisions with each leading to a mean response or to another decision.
+
+A random forest algorithm addresses predictive uncertainty by making predictions over many trees (a forest). It creates a sample from the set of all years and grows a tree using data only from the sampled years. It then repeats the sampling and grows another tree. Each tree gives a prediction and the mean is taken. 
+
+# Cross Validation (L15)
+
+Cross-validation compares predictive skill across different statistical models. It removes noise specific to each data point and estimates how well the prediction algorithm (e.g., random forest) finds prediction rules when this coincident information is unavailable.
+
+# Logistic Regression (L15)
+
+Linear regression is the workhorse model for quantitative geographic research. Often however the response variable is binary (only two outcomes). 
+
+For instance: an event occurs or it doesn't. Many research questions, especially in social and medical science involve predicting the probability that something will happen. Probability that Trump will be impeached before the end of his term. Chance that a person will contract Zika. Or the questions involve predicting proportions or percentages: Proportion of people unemployed. Percentage of lakes in the state that contain toxins.
+
+These situations involve binary outcomes. Logistic regression statistically describes how a binary response variable is associated with a set of explanatory variables. Applications of logistic regression involve the idea of predicting a chance (or probability/percentage).
+
+The mechanics of fitting the model to a set of data is the same as before. However, the coefficients are determined using the method of maximum likelihood. The method of maximum likelihood answers the question, what is the probability of observing the data, given the model.
+
+The average over a set of binary responses is a number between 0 and 1. For example, generate a set of random binary responses.
+```{r}
+rbinom(n = 100, size = 1, prob = .2)
+```
+
+The size and probability arguments are the number of trials and the probability of success on each trial. `size = 1` is equivalent to flipping a coin.  `prob = .5` is equivalent to a fair coin. `n` is the number of responses. The average taken over all responses is the probability of success.
+```{r}
+mean(rbinom(n = 100, size = 1, prob = .5))
+mean(rbinom(n = 100, size = 1, prob = .9))
+```
+
+A regression model predicts the mean response. A logistic regression model predicts the probability. For example, the probability of lung cancer given smoking habit and age.
+
+Limitation of linear regression when the response variable is binary
+
+Probabilities are bounded between 0 and 1, but a linear regression line is not.
+
+Example: Consider the data collected from the recovered solid booster rockets of the 23 previous shuttle flights (before the Challenger Space Shuttle disaster in 1986). The temperature in F at the time of liftoff and whether there was (1) or was not (0) damage to the O-rings on the booster.
+```{r}
+Temperature = c(66, 70, 69, 68, 67, 72, 73, 70, 57, 63, 70, 78, 67, 53, 67, 75, 70, 81, 76, 79, 75, 76, 58)
+Damage = c(0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1)
+```
+
+In this setting, which variable is the response?
+
+A scatter plot of damage and temperature with the best fit line is obtained by typing:
+```{r}
+df = data.frame(Damage, Temperature)
+ggplot(df, aes(x = Temperature, y = Damage)) +
+         geom_point() +
+         geom_smooth(method = lm)
+```
+
+The plot shows lower chance of O-ring damage when temperatures are higher, but a straight line does not capture the relationship very well.
+
+Regress damage on temperature. Is the model significant?
+```{r}
+lrm = lm(Damage ~ Temperature, data = df)
+summary(lrm)
+```
+
+Yes, temperature is significant in explaining O-ring damage. Mean Damage = 2.905 – .037 x Temp. For every one degree F decrease in temperature the chance of damage increases by about 4 percentage points.
+
+The mean damage can be interpreted as the probability of damage for the given temperature. What is the predicted chance of damage if the temperature is 77F, 65F, and 51F?
+```{r}
+predict(lrm, data.frame(Temperature = c(77, 65, 51))) * 100
+```
+
+Although this appears to be a reasonable prediction equation, it leads to nonsensical forecasts. For example, what is the predicted chance of damage when the temperature is 85F and when it is 45F?
+```{r}
+predict(lrm, data.frame(Temperature = c(85, 45))) * 100
+```
+
+The bounded nature of probabilities is not captured by a linear regression model.
+
+The inadequacy of the linear regression model for these data as shown in the pattern of the residuals.
+```{r}
+lrm.df = fortify(lrm)
+ggplot(lrm.df, aes(x = .fitted, y = .stdresid)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+```
+
+Rather than exhibiting a random scatter of points, the plot of residuals versus temperature shows a pattern of points along two slanted lines. We need to consider a more appropriate model for binary data.
+
+### A generalized linear model
+
+A regression model has a response function and a regression structure. The response function is specified on the left side of the equation and the regression structure on the right.
+
+With linear regression the response function is the *identity* function of the mean of y given x ($\mu(y|x)$) and the regression structure is a weighted sum of the explanatory variables plus an intercept. The weights are the regression coefficients.
+$$
+\mu(y|x) = \hat \beta_0 + \hat \beta_1  x
+$$
+
+Logistic regression generalizes the linear regression model by changing the response function to be the *logit* function of the mean of y given x ($\pi(y|x)$).  
+
+The logit function is the logarithm of the mean divided by one minus the mean.
+$$
+\hbox{logit}(\pi) = \log\left(\frac{\pi}{1 - \pi}\right).
+$$
+Since the mean of a set of binary outcomes is a probability the symbol $pi$ (rather than $\mu$) is used for the mean. So the logit is the logarithm of the ratio of two probabilities: probability it will happen divided by the probability it won't happen. 
+
+The logit function is the logarithm of the odds when the mean is a probability. Odds are expressed as the probability that it will happen divided by the probability that it won't happen. So we write odds as for:against. If there is a 2:1 odds of something happening, then the probability it will happen is 2/(1 + 2) or 2/3 (67%).
+
+Conversely if there is a 67% chance that something will happen then the odds of it happening are .67/(1-.67) = 2 and expressed as 2 to 1 or 2:1. The inverse of the logit function is called the logistic function. With logit($\pi$) = $z$, 
+$$
+\pi = \frac{\exp(z)}{1 + \exp(z)} = \frac{1}{1 + \exp(-z)}.
+$$
+
+To see it graphically, type
+```{r}
+curve(1/(1 + exp(-x)), 
+      from = -6, to = 6, 
+      col = "red", ylab = "f(z)", xlab = "z")
+abline(h = 1, lty = 2)
+abline(h = 0, lty = 2)
+```
+
+The "input" is z and the "output" is f(z). The logistic function takes as input any value from negative infinity to positive infinity and returns a value between 0 and 1.
+
+The variable z can be thought of as the exposure to some set of risk factors, while f(z) represents the chance of a particular outcome given the exposure.
+
+The variable z is a measure of the total contribution (weighted sum) of all the risk factors and is known as the logit. It is defined as
+$$
+z = \beta_0 + \beta_1  x_1 + \beta_2  x_2 + \ldots + \beta_p x_p
+$$
+where the parameters are $\beta_0$,..., $\beta_p$ and the risk factors are $x_1$,..., $x_p$. The intercept $\beta_0$ is the value of $z$ when there is no risk (base rate).
+
+Each regression coefficient describes the size of the contribution of that risk factor. A positive regression coefficient means that that risk factor increases the probability of the outcome. A negative regression coefficient means that that risk factor decreases the probability of that outcome.
+
+A large regression coefficient means that that risk factor strongly influences the probability of that outcome; while a near-zero regression coefficient means that that risk factor has little influence on the probability of that outcome.
+
+Logistic regression is the quantitative way to describe the relationship between one or more risk factors and a binary outcome (such as death).
+
+Example: The Donner Party
+
+The Donner and Reed families from Springfield, Illinois headed to California in 1846. The group, which became know as the 'Donner Party', was stranded in the Sierra Nevada mountains by heavy late October snows. By the time the last survivor was rescued in April 1847, 40 of the 87 members had died from famine and exposure to the cold.
+ 
+The data file (*DonnerParty.txt*) contains a list of individuals in the Donner Party. The list contains the `Name`, `Sex`, `Age`, and `Survival` status of all individuals 15 years or older.
+
+For any given age, were the odds of survival greater for women?
+
+Get the data.
+```{r}
+DP.df = read.table("http://myweb.fsu.edu/jelsner/temp/data/DonnerParty.txt", 
+                   header = TRUE)
+head(DP.df)
+```
+
+Look at the data. How many men and how many women were in the party?
+```{r}
+table(DP.df$Sex)
+```
+
+How many survived?
+```{r}
+table(DP.df$Survival)
+```
+
+What was the average age in the party?
+```{r}
+mean(DP.df$Age)
+```
+
+Examine bi-variate relationships.
+```{r}
+ggplot(DP.df, aes(x = Survival, y = Age)) + 
+  geom_boxplot()
+```
+
+Age appears to be a factor in explaining survivability. Younger members of the party appear to have had a better chance of survival. What about sex as an explanatory variable?
+```{r}
+table(DP.df$Sex, DP.df$Survival)
+```
+
+Of the 15 women, 5 perished and 10 survived. This compares with 20 deaths and 10 survivors among the men. It appears that sex is also important. Relatively more women survived than men. Logistic regression quantifies these associations (sex and age on survivability) in terms of probabilities.
+
+To fit a logistic model to the data type:
+```{r}
+logrm = glm(Survival ~ Age + Sex, data = DP.df, 
+            family = binomial)
+summary(logrm)
+```
+
+family = normal would be annomral regression
+glm is a genneralization...for logistic regression. 
+
+The relative small $p$-values (< 0.05) on the regression coefficients confirm that both `Age` and `Sex` are important in explaining survivability. 
+
+Caution: the estimate on the binary explanatory variable gets suffixed with the label used as the 1. Here `male` is used as 1 and `female` 0 (alphabetical).
+
+Whether or not the logistic model is statistically significant is based on the deviance. The smaller the residual deviance, the better the logistic model fits the data. The summary output shows a null deviance of 61.827 on 44 degrees of freedom. This is the deviance of a model with a fixed survival probability (44%; 20 out of 45 survived) independent of explanatory variables.
+
+The residual deviance is 51.256 on 42 degrees of freedom. This is the deviance for the model involving `Age` and `Sex` as explanatory variables (full model). The change in deviance from the null to the full model is:
+
+61.827 - 51.256 = 10.571 on 44 - 42 = 2 degrees of freedom. Comparing this drop in deviance to a chi-squared value.
+```{r}
+pchisq(10.571, 2, lower.tail = FALSE)
+```
+
+This is the $p$-value for the model as a whole. Since it is less than .01 so we can state that there is convincing evidence that the model is significant in explaining survivability.
+
+We write the logistic regression model, where $\pi$ represents survival probability, as
+$$
+\hbox{logit}(\pi) = 3.23 - .0782 \times \hbox{Age} - 1.597 \times \hbox{Sex}
+$$
+In words: The logarithm of the odds of survival equals 3.23 minus .078 times Age - 1.59 times Sex.
+
+We get confidence intervals on the parameter values using an extractor function.
+```{r}
+confint(logrm)
+```
+
+*Interpretion*
+
+To compare the survivability (odds of surviving) of a party member who is 50 with survivability of a member who is only 20, the model tells us that the odds ratio of a 50-year old surviving relative to a 20-year old is
+$$
+\exp(-.0782 \times (50 - 20))
+$$
+Or
+
+exp(-.0782*(50 - 20)) = 0.0958 ~ 0.1
+
+So, the odds of a 50 year-old surviving were about 1/10 the odds of a 20 year-old. The model makes sense and is quantitative. The model tells us that the odds of a 20-year old surviving is 10 times the odds of a 50-year old surviving regardless of whether it is a man or woman.
+
+If an explanatory variable increases by 1 unit while the other explanatory variables remain constant, the odds will change by a multiplicative factor given by the exponent of the coefficient.
+
+The odds of a woman (`Sex = 0`) surviving relative to the odds of a man (`Sex = 1`) of the same age is
+
+exp(-1.597*(0 - 1)) = 4.94
+
+Thus, the survival odds of a women are about 5x the survival odds of a man of the same age.
+
+*Maximizing the likelihood*
+
+Consider the following alternative logistic model for the Donner party survivability. Here by alternative, I mean that the parameters are a bit different.
+
+logit(pi) = 3.5 - .08 * Age - 1.25 * Sex
+
+The model is the same except with different parameter values: (3.5, -.08, -1.25) instead of (3.23, -.078, -1.60).
+
+Now, Antoine gets coded as `Age1 = 23`, `Sex1 = 1`. So we plug his attributes into the model and get
+
+logit(pi1) = 3.50 - (.08 * 23) - (1.25 * 1) =  0.41
+
+And, pi1 = exp(.41)/[1 + exp(.41)] = 0.601
+
+Thus the model tells us that Antoine had a 60.1% chance of surviving given his age and sex.
+
+Continuing down the list, we find that Mary Breen, a 40-yr-old women (Age2 = 40, Sex2 = 0) has a survival probability of 0.574 according to the model.
+
+In this way we can find the probability of survival for all party members, given the model.  
+
+Then the probability over a combination of outcomes is calculated by multiplying individual probabilities under the assumption the probabilities are independent (stories of cannibalism notwithstanding).
+
+For example, the probability that everyone survives is
+0.601 * 0.574 * ... * 0.679 = 6.678826e-24
+
+Similarly we can find the probability over any combination of people surviving and dying.  One of these combinations is the probability over all members surviving who actually did survive and all members perishing who actually did perish.
+
+(1-0.601) * (0.574) * ... * (0.679) = 4.383823e-12
+
+This number is very small, but not nearly as small as before.
+
+These probabilities are based on the particular model (that is the particular values of the parameters). The probability of the known outcome calculated as 4.38e-12 for parameters having a value of (3.50, -0.08, -1.25) is called the model's likelihood.
+
+The same procedure can be used to calculate likelihoods of the observed outcome under different models. One set of parameter values is more likely than another set if it gives the observed outcome a higher probability of occurrence.
+
+In fact, one set of parameter values will give the maximum likelihood. As a guide to selecting the parameters of the model, the likelihood principle says: "choose the parameter values that assign the highest probability to the observed outcome."  Math involving iterative computations provides a direct way to find the maximum likelihood estimates.
+
+To see the probability of survival assigned to each individual in the Donner party from the logistic regression model type
+```{r}
+logrm$fitted
+```
+
+Thus the values of (3.23, -.078, -1.60) are the maximum likelihood estimates (MLE).
+
+*Prediction*
+
+To predict the survival probability of a 50-year old man, type
+```{r}
+predict(logrm, data.frame(Age = 50, Sex = factor("male")), 
+        type = "response")
+```
+
+Since the variable `Sex` is a factor, it must be specified as a factor in the `predict()` function.
+
+Also, with a generalized linear model we need to specify what we want the predicted value to be. By default it will be the logarithm of the odds ratio (logit). To turn this value into a probability (apply the logistic function) we specify `type = "response"`.
+
+We see that based on the data AND the model, we would predict a survival probability of 9.3% for a 50-year old man. What is the survival probability for a 50-year old woman? A 25-year old woman?
+
+Although we can't get a 95% confidence interval on the predicted values, we can tell the predict function to output the standard error on the prediction by including the argument `se.fit = TRUE`.
+
+*Model adequacy*
+
+Recall the diagnostics used linear regression for assessing model adequacy involved plots of the model residuals. Similar diagnostics are available for logistic regression, but they are often more difficult to interpret.
+
+Linearity in log-odds: A scatter plot of the dependent variable versus the independent variable is not informative since the value of the dependent variable is 0 or 1.
+
+A "smoothed" scatter plot can average across adjacent values. Smoothing can be accomplished using a locally weighted scatter plot smoothing function. This procedure regresses the dependent variable on the independent variable using only a small amount of data near the point. This procedure is repeated to generate a smooth curve.
+
+Using the Donnor Party, information we will first convert survival from a factor to a numeric value.  Second, we will fit a loess curve to the relationship between age and survival.  Third, we will logistically transform the probabilities.
+```{r}
+DP.df$Survival2 = as.integer(DP.df$Survival) - 1
+lfit = loess(DP.df$Survival2 ~ DP.df$Age)
+
+DP.df$lgpred = log(predict(lfit)/(1 - predict(lfit))) 
+
+ggplot(DP.df, aes(x = Age, y = lgpred)) + 
+  geom_point() + 
+  geom_smooth(method = lm)
+```
+
+Residual deviance: Returning to the output from summary(logrm), we find that the residual deviance is 51.256 on 42 degrees of freedom. A p-value from a chi-squared distribution with this quantile value and this dof is evidence in favor of the null hypothesis that the model is adequate.  A small $p$-value is evidence AGAINST model adequacy.
+
+Type
+```{r}
+pchisq(51.256, 42, lower.tail = FALSE)
+```
+
+Since the $p$-value exceeds 0.15 we fail to reject the null hypothesis that the `model is adequate` and report that there is no compelling evidence that the model can be improved.
+
+# Influential observations (L16)
+
+Cook's distance indicates how important an observation is to the model. Specifically it measures the amount of change in the regression coefficients when the observation is excluded from the model. 
+
+If the amount of change is large when an observation is removed, then the observation is said to be influential to the model and the observation will have a large Cook's distance.
+
+Recall the data on the Space Shuttle O-ring damage and launch time temperature. The recovered booster rockets were checked for damage to the rings. A damage rocket booster is coded as 1.
+```{r}
+Temperature = c(66, 70, 69, 68, 67, 72, 73, 70, 57, 63, 70, 78, 67, 53, 67,
+         75, 70, 81, 76, 79, 75, 76, 58)
+Damage = c(0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 
+           0, 1, 0, 1)
+```
+
+A logistic regression model is used to predict the probability of damage given the temperature.
+
+The setup reminds me of survivorship bias. During World War II, the statistician Abraham Wald took survivorship bias into his calculations when considering how to minimize bomber losses to enemy fire. Researchers conducted a study of the damage done to aircraft returning from missions, and recommended that armor be added to the areas showing the most damage. 
+
+Wald noted that the study only considered the aircraft that had survived their missions--the bombers shot down were not present for the damage assessment. The holes in the returning aircraft represented areas where a bomber could take damage and still return home safely. Wald proposed that the Navy instead reinforce the areas where the returning aircraft were unscathed, since those were the areas that, if hit, would cause the plane to be lost. 
+
+Lesson: the most important part of a study might be what data where not available.
+
+Fit a logistic regression model to the data.
+```{r}
+logrm = glm(Damage ~ Temperature, 
+            family = binomial)
+summary(logrm)
+```
+
+We interpret the coefficient on the temperature term to mean that damage is 2.5 times more likely on average at 65F than at 69F.
+```{r}
+round(exp(-.2322 * (65 - 69)), 1)
+```
+
+With generalized linear models, model adequacy is determined by the residual deviance. No plots are needed. 
+
+The residual deviance is 20.315 on 21 degrees of freedom. A $p$-value from a $\chi^2$ distribution with this quantile value and this many degrees of freedom is evidence in favor of the null hypothesis that the model IS adequate.
+```{r}
+pchisq(20.315, 21, lower.tail = FALSE)
+```
+
+The large $p$-value gives you no reason to question model adequacy.
+
+To see what observation is most influential to the regression model use the `fortify()` function (**ggplot2** package) on the model object then list the rows of the resulting data frame in descending order of Cook's distance (`.cooksd`).
+```{r}
+fortify(logrm) %>%
+    arrange(desc(.cooksd))
+```
+
+# Receiver operating characterstic (ROC) curve
+
+There is no goodness-of-fit statistic in a logistic regression. Some packages compute a pseudo $R^2$ value but it does not indicate goodness-of-fit.
+
+Instead the receiver operating characteristic (ROC) curve is used. It measures how well the logistic regression model discriminates the binary outcomes. It monitors the trade-off between sensitivity and specificity.
+
+*Sensitivity* is the probability the model predicts a response as 'positive' given that it is positive (Y = 1). In words, the sensitivity is the proportion of true positives. Conversely the *specificity* is the probability the model predicts a response as 'negative' given that it is negative (Y = 0). A perfect model has a 100% sensitivity and 100% specificity. 
+
+Use the logistic regression model to calculate fitted probabilities for each observation. Then select a cut-point c to classify the proportion of responses with a fitted probability above c as positive and those at or below it as negative. 
+
+Increasing the value of the cut-point c means fewer responses will be predicted as positive and more will be predicted as negative. There is a trade-off between sensitivity and specificity. The ROC curve is a plot of the values of sensitivity against one minus specificity, as the value of the cut-point c is increased from 0 through to 1.
+
+To see this create an ROC curve for the O-ring damage on launch temperature logistic regression object. First extract the fitted O-ring probabilities at the observed temperatures.
+```{r}
+predpr = predict(logrm, 
+                 type = "response")
+Temperature = c(66, 70, 69, 68, 67, 72, 73, 70, 57, 63, 70, 78, 67, 53, 67,
+         75, 70, 81, 76, 79, 75, 76, 58)
+Damage = c(0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 
+           0, 1, 0, 1)
+```
+
+The `roc()` function from the **pROC** package generate a roc object. The syntax is to specify a regression type equation with the response y on the left hand side and the object containing the fitted probabilities on the right hand side.
+```{r}
+roccurve = roc(Damage ~ predpr)
+plot(roccurve)
+```
+
+The sensitivity increases upward and specificity increases leftward. A curve that gets close to the upper-left corner of the plot is better at discriminating outcomes. A curve that lies along the diagonal has no discrimination ability.
+
+A popular way of summarizing the ability of a model to discriminate is the area under the ROC curve. The area ranges from 1, corresponding to perfect discrimination, to .5 corresponding to a model with no discrimination ability.
+```{r}
+auc(roccurve)
+```
+
+In this case .78 indicates an acceptable level of discrimination ability.
+
+# Poisson Regression (L16)
+
+A Poisson distribution describes counts. Counts are things like the number of hurricanes each year. A count is how many times something happened over a given interval (time and/or space). 
+
+The daily number of lightning strikes over Tallahassee during summer. The number of fish of a given species found in a particular river.
+
+The Poisson distribution has the property that the variance is equal to the mean.
+
+The density function of the Poisson distribution is
+$$
+p(x) = \frac{\exp(-\lambda) \times \lambda^x}{x!}
+$$
+where $p$ is the probability of observing $x$ counts when the average is lambda. x! is x factorial, where for example 4! = 4 * 3 * 2 * 1.
+
+For example, over a set of 10 years the number of hurricanes affecting the coast is 
+```{r}
+y = c(0, 1, 5, 2, 2, 0, 1, 1, 2, 3)
+mean(y)
+```
+
+Thus lambda is 1.7.
+
+Assume the counts are described by a Poisson distribution then the probability of obtaining zero events is obtained by setting x to 0.
+$$
+p(0) = \exp(-\lambda)
+$$
+
+Thus the probability of zero hurricanes affecting the U.S. next year, given a mean rate of 1.7 hurricanes/year is 18%.
+```{r}
+exp(-1.7)
+```
+
+Note that there were 2 out of the 10 years without hurricanes (20%).
+
+The probability of four hurricanes given a mean of 1.7 is
+```{r}
+exp(-1.7) * 1.7^4/(4 * 3 * 2 * 1)
+```
+
+Or 6%. Note that none of the 10 years had 4 hurricanes underscoring the importance of distributions.
+
+The `dpois()` function evaluates the above equation for any count of interest. The probability of observing exactly one hurricane when the rate is 1.7 hurricanes per year is
+```{r}
+dpois(4, lambda = 1.7)
+```
+
+Or the probability of five hurricanes when the rate is 1.7 expressed in percent.
+```{r}
+dpois(5, lambda = 1.7) * 100
+```
+
+To answer the question, what is the probability of one or fewer hurricanes use the cumulative probability function `ppois()`.
+```{r}
+ppois(1, lambda = 1.7)
+```
+
+The probability of more than one hurricane is
+```{r}
+ppois(1, lambda = 1.7, lower.tail = FALSE)
+```
+
+To simulate 100 seasons of hurricane strikes on the U.S. coast with a rate that is commensurate to the long-term rate of 1.7 hurricanes per year, type
+```{r}
+rpois(100, lambda = 1.7)
+```
+
+To see the distribution
+```{r}
+table(rpois(100, lambda = 1.7))
+barplot(table(rpois(100, lambda = 1.7)))
+```
+
+# Poisson regression model
+
+What if the rate of hurricanes depends on climate variables? Note the way the question is worded. Interest is on the rate of hurricanes. Given the rate the counts follow a Poisson distribution. 
+
+We do not model counts directly. Poisson regression is not least squares regression on the logarithm of counts. It is a regression using the logarithm of the rate. 
+
+It's nonlinear in the response function, but linear in regression structure and the model coefficients are determined by the method of maximum likelihoods. This is similar to logistic regression where the response function is the logit.
+
+Our interest here is the relationship between the climate variables and hurricanes. We do this with a regression model that specifies that the logarithm of the annual rate is linearly related to the explanatory variables.
+
+Consider the data from *UShur.txt* which contains annual values of US hurricane counts and values of 4 explanatory variables including NAO, SOI, SST, and SSN.
+
+```{r}
+UShur = read.table("http://myweb.fsu.edu/jelsner/temp/data/UShur.txt",
+                   header = TRUE)
+names(UShur)
+```
+
+Let's first examine the relationships using plots. Scatter plots are not ideal. In fact, what we want is a mean count (rate) as a function of the explanatory variables.
+
+To do this let's first break the variables into quantiles and graph a series of hurricane count box plots as a function of successive quantiles.
+```{r}
+NAOq = cut(UShur$NAOmj, quantile(UShur$NAOmj, seq(0, 1, .1)))
+boxplot(UShur$US ~ NAOq, xlab = "NAO deciles (sd)",
+        ylab = "US hurricane counts")
+```
+
+Here we see that the boxes tend to be lower with increasing quantiles of the NAO. To help visually, we can plot regression lines on various statistics from the box plot.
+```{r}
+xx = 1:10
+x = boxplot(UShur$US ~ NAOq)
+abline(lm(x$stats[5, ] ~ xx), col = "red")
+abline(lm(x$stats[4, ] ~ xx), col = "blue")
+abline(lm(x$stats[3, ] ~ xx), col = "green")
+```
+
+Similar plots can be done for the other explanatory variables.
+
+### A Poisson model for hurricanes
+
+To regress the annual hurricane count onto NAO, SOI, SST, and SSN using a Poisson regression, type
+```{r}
+prm = glm(US ~ NAOmj + SOIao + SSTao + SSNao, 
+          data = UShur, family = "poisson")
+summary(prm)
+```
+
+The table of model coefficients indicates that all 4 explanatory variables are significant ($p$-values less than .15). The most important variable is the SOI, followed by the NAO.
+
+The value of -.197 indicates that for a one s.d. change in the NAO, the difference in the logarithm of expected counts is -.197 holding the other explanatory variables constant.  
+
+The difference in logs is equal to the log of the quotient and therefore we interpret the coefficient as the log of the ratio of expected counts.
+```{r}
+exp(-.197)
+```
+
+For a one s.d. increase in the NAO the hurricane rate decreases by 1 - .82 or 18%.
+
+The drop in deviance (deviance of the null model minus the deviance of the full model) is used to test whether the model is significant against the null hypothesis that none of the variables are useful.  
+
+Since the model contains significant explanatory variables the model itself is significant. To see this, type:
+```{r}
+pchisq(189.78 - 161.15, 140 - 136, lower.tail = FALSE)
+```
+
+The residual deviance is 161.15 on 136 degrees of freedom. A p-value from a chi-squared distribution with this quantile value and this dof is evidence in favor of the null hypothesis that the model is adequate.
+```{r}
+pchisq(161.15, 136, lower.tail = FALSE)
+```
+
+A somewhat small $p$-value is evidence against model adequacy. One reason for an inadequate  Poisson regression model is over dispersion. Over dispersion occurs when variance is larger than the mean. Under dispersion occurs when the variance is less than the mean. Alternative: Negative binomial regression. 
+
+# Quantile regression
+
+Linear regression is a model for the mean of the response variable. Quantile regression is a model for the quantiles of the response variable. 
+
+Quantiles are points taken at regular intervals from the cumulative distribution function of your data. Quantiles mark a set of ordered data into equal-sized data subsets.
+```{r}
+quantile(rnorm(100), prob = seq(.1, .9, .1))
+```
+
+Consider the set of per-storm maximum wind speeds.
+```{r}
+L = "http://myweb.fsu.edu/jelsner/temp/data/LMI.txt"
+LMI.df = read.table(L, header = TRUE)
+round(head(LMI.df)[c(1, 5:9, 12, 16)], 1)
+```
+
+Here `WmaxS` is the estimated fastest wind speed for each hurricane occurring in the North Atlantic Ocean (including Gulf of Mexico and Caribbean Sea).
+
+First convert the wind speeds from the operational units of knots to the SI units of meters per second (m/s).
+```{r}
+LMI.df$WmaxS = LMI.df$WmaxS * .5144
+```
+
+### Quantiles and distributions
+
+The quartiles (.25 and .75 quantiles) of the wind speed distribution are obtained by
+```{r}
+quantile(LMI.df$WmaxS, prob = c(.25, .75))
+```
+
+We see that 25% of the storms have a wind speeds less than 25 m/s and 75% have a wind speeds less than 46 m/s so that 50% of all storms have wind speeds between 25 and 46 m/s (interquartile range).
+
+To see if there is a trend over time you use the linear regression. However, we note that the distribution of per cyclone maximum wind speed is not normal so it is best to transform the wind speeds. In this case a logarithmic transform is a good choice.
+
+To examine the distributions of the raw and log-transformed wind speeds, type
+```{r}
+par(mfrow = c(1, 2))
+boxplot(LMI.df$WmaxS)
+boxplot(log(LMI.df$WmaxS))
+```
+
+To see if there is a significant trend in wind speeds over time we regress `WmaxS` onto time. Here time is year in the column labeled `Yr`.
+```{r}
+summary(lm(log(WmaxS) ~ Yr, data = LMI.df))
+```
+
+What do we conclude?
+
+### Conditional quantiles
+
+Linear regression is a model for the conditional mean (here, conditional on year). What about higher wind speeds? The potential intensity of a hurricane is a theoretical limit to how strong it can get given how warm the ocean is. Heat engine theory of tropical cyclone intensity.
+
+The upper quartile wind speeds represent a subset of all hurricanes that should be on average closest to their potential intensity. So if you want to detect a trend in the set of strongest hurricanes you need a model for the conditional quantiles. 
+
+Here we restrict the observations to the years since satellite data (1967).
+
+Create side-by-side box plots as a function of year.
+```{r}
+par(mfrow = c(1, 1))
+attach(LMI.df)
+x = boxplot(WmaxS ~ factor(Yr), plot = FALSE)
+boxplot(WmaxS ~ factor(Yr), 
+        ylim = c(18, 90), 
+        xlab = "Year", 
+        ylab = "Wind Speed (m/s)")
+xx = 1:44
+abline(lm(x$stats[5, ] ~ xx), col = "red")
+abline(lm(x$stats[4, ] ~ xx), col = "blue")
+abline(lm(x$stats[3, ] ~ xx), col = "green")
+detach(LMI.df)
+```
+
+The graph verifies the lack of trend in LMI for average cyclones. It also shows a tendency for the strongest storms to get stronger over time. To quantify this trend and determine significance we turn to a quantile regression model.
+
+### Quantile regression
+
+The functionality is available in the **quantreg** package.
+```{r}
+citation("quantreg")
+```
+
+We begin with the "median" regression of wind speed on year.
+```{r}
+summary(rq(WmaxS ~ Yr, tau = .5, 
+           data = LMI.df),
+           se = "iid")
+```
+
+Insignificant trend. Similar to the linear regression.
+
+How about trends in the upper quantiles?
+```{r}
+summary(rq(WmaxS ~ Yr, data=LMI.df, tau=c(.75, .9, .95)), se="iid")
+```
+
+At the 75th and 95th percentiles, there is suggestive, but inconclusive evidence of a trend, but at the 90th percentile there is convincing evidence of an increase in the intensity of the strongest hurricanes in accord with MPI theory.
+
+To show the results on a plot, type:
+```{r}
+model = rq(WmaxS ~ Yr, data=LMI.df, tau=seq(.1, .9, .1))
+plot(summary(model, alpha=.05, se="boot"), parm = 2, pch = 19, cex=1.2,
+     mar=c(5, 5, 4, 2), ylab = "Trend (m/s/yr)", xlab="Quantile",
+     main = "North Atlantic Hurricanes")
+```
+
+The dots with lines indicate the trend for quantiles in the range between .1 and .9 by increments of .1.  The gray shading indicates the 95% uncertainty interval on the slope estimate. The red solid line is the least squares regression slope and the dotted lines are the 95% uncertainty interval about that estimate.
+
+In summary, quantile regression provides a more complete picture of how the response variable is conditioned on the values of the explanatory variables.
+
+# Log-log regression (L17)
+
+The number of tornado casualties is related to the power of the wind and how many people are in harms way. The power of the wind is the energy dissipation over the tornado's path.
+$$
+E = \frac{1}{2}A_p \rho \sum_{j=0}^{J} w_j v_j^{3},
+$$
+where $A_p$ is the path area, $\rho$ is air density, $v_j$ is the midpoint wind speed for each damage rating $j$, and $w_j$ is the corresponding fraction of path area. 
+
+The model is written as 
+$$
+C \sim  E^{\beta_E} \cdot P^{\beta_P}
+$$
+
+where $C$ is the number of casualties, $E$ is the power in watts, and $P$ is the population density in persons per square km.
+
+Get the data.
+```{r}
+L = "http://myweb.fsu.edu/jelsner/temp/data/TornadoCasualties.txt"
+df = read.table(L, header = TRUE)
+
+df %>%
+  filter(cas > 0) %>%
+  summarize(mean(cas),
+            var(cas))
+```
+
+For the set of tornadoes with at least one casualty, the mean and variance of the counts are 14.9 and 5850, respectively suggesting a negative binomial model for counts expressed as
+$$
+C \sim \hbox{NegBin}(\mu, n)
+$$
+where NegBin($\mu$, $n$) indicates that the casualty counts are described by negative binomial distributions with mean (rate) $\mu$ and size $n$.
+$$
+\log(\mu) = \beta_0 + \beta_P\,\log(P) + \beta_E\,\log(E)
+$$
+The logarithm of casualty rate (given at least one casualty) is linearly related to the logarithm of the population density ($P$) and the logarithm of the energy dissipation ($E$). 
+
+The coefficient $\beta_P$ is the population elasticity and the coefficient $\beta_E$ is the energy elasticity and $\beta_0$ is the intercept. 
+Population elasticity of tornado casualties measures the change in the casualty amount in response to a change in population for an average energy dissipation. A 1% increase in $P$ leads to an $\beta_E$% increase in the rate of casualties.
+
+To fit the negative binomial regression we use the `glm.nb()` function from the **MASS** package.
+```{r}
+df2 = df %>%
+         filter(cas > 0)
+model = glm.nb(cas ~ log(popD) + log(AMT), 
+               data = df2, link = log)
+summary(model)
+```
+
+The coefficient on the population density term is .35 indicating that a doubling of the population leads to a (2^.35 - 1) * 100% [27%] increase in the number of casualties. The expanding bull's eye effect.
+
+The coefficient on the energy dissipation term is .29 indicating that a doubling of the tornado energy leads to a 22% increase in the number of casualties.
+
+Is the model significant? The drop in deviance is
+```{r}
+pchisq(1975.49 - 917.79, 871-868, lower.tail = FALSE)
+```
+
+Yes. The model is significant since the $p$-value is less than .05. The null hypothesis is that the model IS NOT significant.
+
+Is the model adequate? The null deviance is 917.79 with 869 degrees of freedom. So.
+```{r}
+pchisq(917.79, 869, lower.tail = FALSE)
+```
+
+Yes. The model is adequate since the $p$-value is greater than .05. The null hypothesis is that the model IS adequate.
+
+Note the model is at the tornado level and is conditional on at least one casualty. We could fit a model at the individual person level. Consider each individual in the path of the tornado. Interaction term. Tornado clusters.
+
+# Local Regression (L17)
+
+In a regression model the response variable (or some function of the response) is linked to a set of explanatory variables. In a quantile regression model the strength of this linkage depends on quantiles of the response. In a geographic regression, the strength of this linkage depends on location.
+
+The model coefficients (slopes) in a geographic regression vary over space and can be mapped. Geographic regression shows where the explanatory variable contributes most strongly to the relationship. Geographic regression is a series of local regressions. 
+
+Local regression is more general and applies when the response variable is modeled using neighborhood values in attribute (feature) space. Compare for example a linear regression of ozone on temperature with a local regression of ozone on temperature.
+```{r}
+ggplot(airquality, aes(x = Temp, y = Ozone)) +
+  geom_point() + 
+  geom_smooth(se = FALSE) +
+  geom_smooth(method = lm, se = FALSE, color = "red")
+```
+
+The linear regression is the red line. The local regression is the blue curve. The linear regression describing the change in mean ozone with temperature over estimates the relationship at low temperature and under estimates the relationship at higher temperature. Careful: It is the relationship we are describing not the observations.
+
+The red line has a single slope value and a single intercept value that we can obtain with the `lm()` function. The local regression has a slope and intercept for each observation. For example, with `Temp = 70`, only observations with similar temperatures are used. This is done by weighting the observations inversely based on their distance to `Temp = 70`. Observations with temperature near 70F are given more weight than those much warmer and much colder.
+
+The change in ozone per degree change in temperature is small for temperatures less than 75F, but this change increases as temperatures rise through the 80's.
+
+*Weights matrix*
+
+This inverse-distance weighting is applied to each observation so we have a matrix of weights. Elements of the weights matrix W are labeled $w_{ij}$, where $i$ indexes the location and $j$ indexes the other nearby values. Values in W are determined by a function called a kernel.
+
+What does a kernel look like?
+```{r}
+p = ggplot(data.frame(x = c(-3, 3)), aes(x)) + 
+    stat_function(fun = function(x) 1/sqrt(2 * pi) * exp(-.5 * x^2), lwd = 2) +
+    xlab("spatial distance") + 
+    ylab("weight") +  
+    ggtitle("kernel")
+p
+# Location of interest
+p = p + geom_point(aes(x = 0, y = 0), col = "red", size = 3) + 
+    geom_text(aes(x = 0, y = -.02, label = "x1"))
+p
+# The data at that location gets the most weight
+p = p + geom_segment(aes(y = 1/sqrt(2 * pi) * exp(-.5 * 0^2), 
+                         yend = 0, x = 0, xend = 0), 
+                     linetype = 2) +
+    geom_text(aes(x = .3, y = .2, label = "w11"))
+p
+# Neighboring locations
+p = p + geom_point(aes(x = 1, y = 0), col = "black", size = 3) + 
+    geom_text(aes(x = 1, y = -.02, label = "x2"))
+p
+#
+p = p + geom_segment(aes(y = 1/sqrt(2 * pi) * exp(-.5 * 1^2), 
+                         yend = 0, x = 1, xend = 1), 
+                     linetype = 2) +
+    geom_text(aes(x = .7, y = .1, label = "w12"))
+p
+#
+p = p + geom_point(aes(x = -2, y = 0), col = "black", size = 3) + 
+    geom_text(aes(x = -2, y = -.02, label = "x3"))
+p
+#
+p = p + geom_segment(aes(y = 1/sqrt(2 * pi) * exp(-.5 * (-2)^2), 
+                         yend = 0, x = -2, xend = -2), 
+                     linetype = 2) +
+    geom_text(aes(x = -1.7, y = .025, label = "w13"))
+p
+```
+
+Shapes other than the Gaussian can be used but they tend to be symmetric reflecting the type of dependency found in many spatial processes.
+
+At each location i for which the local regression model is estimated, the kernel is given by 
+$$
+w_{ij} = \left[-(d_{ij}/h)^2\right], 
+$$
+where $d_{ij}$ is the distance between locations $i$ and $j$, and $h$ is the bandwidth. As $h$ increases, the gradient of the kernel becomes less steep and more data points are included in the local estimation.
+
+```{r}
+p + geom_segment(aes(y = .23, yend = .23, x = -1, xend = 1), col = "blue") +
+    geom_text(x = 0, y = .25, label = "bandwidth")
+```
+
+The choice of bandwidth is a trade-off between variance and bias. A bandwidth that is narrow results in large variation in model parameters across the domain.  A bandwidth that is wide leads to a large bias locally as the model coefficients are influenced by processes not representative of the local conditions.
+
+# Geographic Regression (L17)
+
+Geographic regression (geographically weighted regression--GWR) is local regressions done spatially. A separate model is fit at each observation location. Data for each fit are nearby observations weighted by their distance to the location. The result is a set of regression coefficients at each observation location.
+
+Example: Burglaries in Columbus, OH. The data frame `columbus`  is available in the **spgwr** package.
+```{r}
+data(columbus)
+columbus[1:3, c(7:9, 13, 14)]
+```
+
+Interest is the relationship between the amount of crime and income and housing prices. Crime is the response variable (`CRIME`) as residential burglaries and vehicle thefts per 1000 households. Income (`INC`) and housing values (`HOVAL`) are explanatory variables in units of 1000 dollars. The `X` and `Y` values define the centroids of the census tracts.
+
+*Start with linear regression (always)*
+
+Are income and housing prices statistically related to crime in Columbus, OH?  How much of the variation in crime can be explained by housing prices and income? 
+```{r}
+model.lm = lm(CRIME ~ INC + HOVAL, data = columbus)
+summary(model.lm)
+```
+
+For every one unit ($1000) increase in income there is a 1.6/10,000 households decrease in crime, holding housing price constant. This value of 1.6 is based on all the census tracts across the city and it represents the global (overall) relationship between crime and income in Columbus at the census tract level of analysis.
+
+Can we do better with a simpler model?
+```{r}
+drop1(model.lm)
+```
+
+No, the model can't be simplified.
+
+*Plot the data*
+
+Before applying a geographic regression, let's look at some plots. To examine the possibility that the relationship between crime and these two explanatory variables varies by location, use a conditioning plot (`coplot()` function).
+```{r}
+coplot(CRIME ~ INC | X + Y, number = 3, 
+       panel = panel.smooth, span = 1, data = columbus)
+```
+
+The plot is described by the formula (`CRIME ~ INC`) with the response variable on the left side of the tilde and the explanatory variable on the right side. The vertical bar is read "conditional on." The relationship between crime and income conditional on location.
+
+Panels are ordered as you would see them on a map with the lower-left panel being the southwest side of Columbus and the upper-right the northeast side. 
+
+The number of conditioning intervals is given by the argument number. It is used if the conditioning variable is not a factor. The default is 6. The `X` and `Y` ranges vary across the panels with overlap as shown in the margin plots.
+
+The red lines a local regression model through the points. There appears to be some variation in the slope of the red lines.
+
+Where is crime most prevalent?
+```{r}
+coplot(Y ~ X | CRIME, data = columbus)
+```
+
+Here the conditioning is reversed. We condition location based on crime. The margin plot shows the level of crime from low to high (left to right) and what range of crime values are used in each panel starting in the lower left and finishing in the upper right.
+
+More familiar is a bubble plot where the symbol size is proportional to crime.
+```{r, eval = FALSE}
+test <- columbus
+ggplot(data = test, aes(x = X, y = Y)) + 
+  geom_point(aes(size = CRIME))
+```
+
+How far apart are the centroids? First create a 2-column matrix of location coordinates using the `cbind()` function (bind the columns).
+```{r}
+xy = cbind(x = columbus$X, y = columbus$X)
+head(xy)
+```
+
+Next use the `dist()` function to compute the pairwise distances between each location (assuming planar coordinates).
+```{r}
+dij = dist(xy)
+```
+
+The distances are stored as a `dist` object. To examine the distances type the following:
+```{r}
+max(dij)
+min(dij)
+hist(dij)
+length(dij) # should equal n*(n-1)/2
+```
+
+*Select a bandwidth*
+
+The first step is to determine the kernel bandwidth. The default kernel shape is Gaussian. The kernel shape together with the bandwidth specifying the weights matrix.
+
+Selection uses leave-one-out (LOO) cross validation. For a given bandwidth, cross validation determines the sum of the squared differences between the model predicted value and the observed response at each observation location (CV score), where the prediction is made on the observation that is left out of the model. The bandwidth that provides the smallest CV score is chosen.
+
+Here we use the `gwr.sel()` function from the **spgwr** package. We specify the model `CRIME ~ INC + HOVAL, the data, and which columns contain the spatial coordinates. To determine the bandwidth and save it, type:
+```{r}
+model.bw = gwr.sel(CRIME ~ INC + HOVAL,
+                   data = columbus, 
+                   coords = cbind(columbus$X, columbus$Y))
+```
+
+The procedure is an iterative optimization with improvements made based on the residuals from each of the geographic regressions using different bandwidths. Values for the bandwidth and the CV score are printed. After several iterations there is no improvement in the CV score so the corresponding bandwidth is selected.
+
+The bandwidth is 2.27 spatial units.
+
+Fit a geographic regression
+
+Next fit a geographic regression. This is done with the `gwr()` function. The implementation the same as the `gwr.sel()` function except for the bandwidth argument.
+```{r}
+model.gwr = gwr(CRIME ~ INC + HOVAL, 
+                data = columbus, 
+                coords = cbind(columbus$X, columbus$Y), 
+                bandwidth = model.bw)
+model.gwr
+```
+
+The output repeats the call function, which includes the functional form of the model (crime is statistically related to income and housing), the geographic coordinates, and the bandwidth. The kernel is Gaussian (`gwr.Gauss`) and the bandwidth is fixed.
+
+An aspatial summary of the coefficients is given. In general, crime is negatively related to income, but the maximum value for the regression coefficient indicates that for at least one location the relationship is positive. Similar for housing. The median values can be compared to the values from a global regression (right-most column). 
+
+For the linear regression model, for every one unit increase in income there is a 1.6 decrease in crime, holding housing constant. This value of 1.6 is based on the data across the entire city of Columbus and it represents the 'global' linear relationship between crime and income.  
+
+To see what is stored in the model object `model.gwr`, type:
+```{r}
+names(model.gwr)
+```
+
+The first item in the list of twelve is a spatial points data frame (`SDF`). To see what is stored in this data frame, type:
+```{r}
+names(model.gwr$SDF)
+class(model.gwr$SDF)
+```
+
+A spatial points data frame is an S4 class. The 4th version of S. S is a language with two implementations, S-Plus (commercial) and R (free).
+
+The spatial points data frame has five slots with names
+```{r}
+slotNames(model.gwr$SDF)
+```
+
+`@data`, `@coords.nrs`, `@coords`, `@bbox`, `@proj4string`.
+
+The attribute table is a data frame in the slot called `data`.
+  	
+Plot a histogram of the coefficient values for the income term. First extract the attribute table as a data frame using the `slot()` function. Then use `ggplot()`.
+```{r}
+df = slot(model.gwr$SDF, "data")
+ggplot(df, aes(INC)) + 
+  geom_histogram(binwidth = .25)
+```
+
+Note: These are not the values for the variable income. They are the values of the coefficient on the income term in the geographic regression.
+
+The histogram indicates that across most of Columbus the relationship between crime and housing values is negative. But there are a few places where it is positive. As housing values increase, so does crime at certain locations. This information can be quite important.
+
+What percentage of locations show a positive relationship between crime and income?
+```{r}
+sum(df$INC > 0)/length(df$INC)
+```
+
+Map the coefficients to see how the relationship varies across the city.
+
+*Map the output*
+
+The easiest way to make a map from an S4 spatial object is with the `spplot()` method.
+```{r}
+spplot(model.gwr$SDF, "INC")
+```
+
+Orange circles indicate locations where there is a near-zero relationship between crime and income given these data and the model. Blue and black circles indicate an inverse relationship with crime lower in areas of greater wealth. The yellow dots indicate a direct relationship in the neighborhoods surrounding OSU.
+
+The variance explained by the model for crime using both income and housing values is given by the local R squared values. We map the amount of variance explained in a similar why but use the better color ramps available in the **RColorBrewer** package.
+```{r}
+cls = brewer.pal(5, "Greens")
+cls
+spplot(model.gwr$SDF, "localR2", 
+       col.regions = cls)
+```
+
+The model explains the least amount of the variance in crime in the center part of the city. This is due to other factors not related income and housing and greater random variation. 
+
+Prediction errors are given in the column labeled `gwr.e`. These are saved and plotted by typing:
+```{r}
+cls = brewer.pal(5, "RdYlGn")
+spplot(model.gwr$SDF, "gwr.e", 
+       col.regions = cls)
+```
+
+Yellow circles show where the prediction errors are smallest. Green circles are where the model under estimates (residual = observed minus predicted) crime given income and housing values. Red circles are where the model over estimates crime.
+
+On average prediction errors using a GWR are smaller than the prediction errors using a global regression. The better fit results from more model coefficients and sometimes from a better representation of the underlying process.
+
+We extract the residuals from the global linear regression and from the geographic regression.
+```{r}
+pe.lm = residuals(model.lm)
+pe.gwr = model.gwr$SDF$gwr.e
+```
+
+The mean squared residuals from the linear regression model and from the geographic regression models are
+```{r}
+mean(pe.lm^2)
+mean(pe.gwr^2)
+```
+
+*Example: Geographic Weighted Regression with Southern homicides*
+
+Recall the data set containing homicide rates in counties of the southern U.S. (Lesson 11). Download the shapefiles from my website and unzip it in your working directory.
+```{r}
+download.file(url = "http://myweb.fsu.edu/jelsner/temp/data/south.zip",
+              destfile = "south.zip", mode = "wb")
+unzip("south.zip")
+```
+
+Read the shapefile using the `readOGR()` from the **rgdal** package.
+```{r}
+homicides.spdf = readOGR(dsn = "south", 
+                         layer = "south", 
+                         stringsAsFactors = FALSE)
+```
+
+Spatial data objects have slots identified by the `@` symbol similar to the way columns are identified with the `$` symbol in data frames.
+
+With the spatial polygons data frame the slots contain the attribute tables as a data frame, the polygons, the plot order, coordinates for the bounding box, and the coordinate reference system.
+
+To get a list of the names of the columns in the attribute table type
+```{r}
+names(homicides.spdf)
+```
+
+We will look at predicting homicide rates (`HR`) given in number per 100,000 people. We will initially consider five explanatory variables including:
+
+`RD` | resource deprivation index
+`PS` | population structure index
+`MA` | marriage age
+`DV` | divorce rate
+`UE` | unemployment rate
+
+The two digit number appended to the column names is the census year.
+
+Recall the `plot()` method plots the county borders.
+```{r}
+plot(homicides.spdf)
+```
+
+We use the `spplot()` method to create a choropleth map of the homicide rates during based on the 1990 census (`HR90`). Break the rates into seven equal range bands. Select a color ramp from the *RColorBrewer* package. 
+```{r}
+range(homicides.spdf$HR90)
+brks = seq(0, 70, 10)
+cr = brewer.pal(7, "Oranges")
+
+spplot(homicides.spdf, "HR90", 
+       col.regions = cr, 
+       at = brks)
+```
+
+Move the color ramp to the bottom and include labels.
+```{r}
+spplot(homicides.spdf, "HR90", 
+       col.regions = cr, 
+       at = brks, 
+       colorkey = list(space = "bottom"),
+       sub = "County Homicide Rate [/100,000] (1990)")
+```
+
+Start with a global linear regression of homicide rates for 1990.
+```{r}
+model.lm = lm(HR90 ~ RD90 + PS90 + MA90 + DV90 + UE90, 
+              data = homicides.spdf)
+summary(model.lm)
+```
+
+Can you simplify it?
+```{r}
+drop1(model.lm)
+```
+
+Final model.
+```{r}
+model.lm2 = lm(HR90 ~ RD90 + PS90 + DV90 + UE90, 
+               data = homicides.spdf)
+step(model.lm2, direction = "both")
+```
+
+The new model can't be simplified.
+
+Map the predicted values from the regression model. First add the predictions to the spatial polygons data frame.
+```{r}
+homicides.spdf$predLM = predict(model.lm2)
+range(homicides.spdf$predLM)
+brks = seq(-10, 30, 5)
+cr = brewer.pal(8, "Oranges")
+spplot(homicides.spdf, "predLM", col.regions = cr, at = brks, 
+       colorkey = list(space = "bottom"),
+       sub = "LM Predicted County Homicide Rate [/100,000]")
+```
+
+Linear regression captures the spatial pattern of homicides across the south but the predicted values have a smaller range. Also since rates are non-negative transforming them to logarithms might be a good choice.
+
+Create a new column in the `homicides.spdf` data slot called `logHR90`.
+```{r}
+homicides.spdf$logHR90 = log(homicides.spdf$HR90)
+x = homicides.spdf$HR90 == 0
+mn = min(homicides.spdf$logHR90[!x])
+homicides.spdf$logHR90[x] = mn
+
+model.lm3 = lm(logHR90 ~ RD90 + PS90 + DV90 + UE90, 
+               data = homicides.spdf)
+summary(model.lm3)
+```
+
+```{r}
+homicides.spdf$predLM = exp(predict(model.lm3))
+range(homicides.spdf$predLM)
+brks = seq(0, 70, 10)
+cr = brewer.pal(7, "Oranges")
+spplot(homicides.spdf, "predLM", col.regions = cr, at = brks, 
+       colorkey = list(space = "bottom"),
+       sub = "LM Predicted County Homicide Rate [/100,000]")
+```
+
+Model the same homicide rates using geographic regression with the same set of explanatory variables. First select the bandwidth.
+```{r}
+bw = gwr.sel(logHR90 ~ RD90 + PS90 + DV90 + UE90, 
+             data = homicides.spdf)
+```
+
+Then fit the models. The model output is saved as a spatial polygons data frame called "model.gwr$SDF"
+```{r}
+model.gwr = gwr(logHR90 ~ RD90 + PS90 + DV90 + UE90, 
+                data = homicides.spdf, 
+                bandwidth = bw)
+```
+
+Add a column to the output spatial polygons data frame.
+```{r}
+model.gwr$SDF$pred2 = exp(model.gwr$SDF$pred)
+```
+
+Map the predicted values.
+```{r}
+spplot(model.gwr$SDF, "pred2", col.regions = cr, at = brks, 
+       colorkey = list(space = "bottom"),
+       sub = "GWR Predicted County Homicide Rate [/100,000]")
+```
+
+Geographic regression similarly captures the spatial pattern of homicides across the south. The spread of predicted values matches the observed spread better than the linear model. The pattern is also a smoother.
+
+Map the coefficient on resource deprivation. From the linear model we saw that as RD increases so does HR.
+```{r}
+range(model.gwr$SDF$RD90)
+brks = seq(0, 1.2, .2)
+cr = brewer.pal(6, "Blues")
+spplot(model.gwr$SDF, "RD90", 
+       col.regions = cr, at = brks, 
+       colorkey = list(space = "bottom"),
+       sub = "Resource Deprivation Coefficient")
+```
+
+All values are above zero, but the areas in dark blue indicate where RD plays a stronger role in explaining HR relative to the other variables.
+
+Where are homicide rates best predicted by the model? This is answered with a choropleth map of `localR2` column in the spatial polygons data frame.
+```{r}
+brks = seq(0, .8, .1)
+cr = brewer.pal(8, "Purples")
+spplot(model.gwr$SDF, "localR2", 
+       col.regions = cr,  at = brks, 
+       colorkey = list(space = "bottom"),
+       sub = "Local Regression Fit")
+```
+
+#Spatial data: 
+
+spatial data frames are s4 class objects 
+
+
+`polygons`: list of the polygon boundaries. Each entry in the list is a separate polygon corresponding to a row in the data frame.
+`plotOrder`: vector of integers listing the order of the polygons for plotting.
+`bbox`: numeric 2 x 2 matrix listing the bounding coordinates (lower left and upper right range of the geographic domain)
+`proj4string`: class of CRS (coordinate reference system) GDAL standard.
+
+# Spatial autocorrelation (L18)
+
+Spatial autocorrelation measures the degree to which data values tend to cluster across space. A data value is given at each location of a spatial feature. Spatial features can be points, lines, polygons, etc. 
+
+For example, yesterday Dr. Wong showed the spatial autocorrelation of Supplemental Security Income (SSI) values. An SSI was measured at each polygon representing a county in the United States.
+
+How spatial autocorrelation is estimated depends on the spatial feature. Estimating spatial autocorrelation using point data is different than estimating spatial autocorrelation with field data.
+
+We begin by considering polygons. Data are often available as attributes corresponding to a set of fixed polygons. Polygons may be defined by the researcher (e.g., regular grids) or may be administrative boundaries (counties).
+
+Attributes are usually data aggregated within each polygon (population, voting results, etc). Areas are a tessellation (completely cover with no overlap) of the study domain but they may contain holes (e.g., lakes).
+
+Spatial dependency (autocorrelation) describes the fact that the attribute values in neighboring polygons are all similar. There are at least three possible explanations for this.
+
+One is a spatial association: whatever is causing an attribute to have a value in one area also causes the attribute to have a similar value in nearby areas. Crime rates in nearby areas tend to be similar due to factors such as economic status, amount of policing and the built environment: conditions that attract one criminal will attract others. Or non-infectious diseases such as lung cancer have similar rates in neighbors with similar socio-economic conditions.
+
+Another is spatial causality: something within a given area directly influences outcomes within nearby areas. The broken window theory of crime suggests that poverty, lack of maintenance, and petty crime tends to breed more crime due to a perceived breakdown in civil order.
+
+Another explanation is spatial interaction: the movement of people, goods or information creates apparent relationships between areas. Infectious diseases spread from a source region thus increasing the disease rates in surrounding areas as the direct result of contact or movement of people between regions.
+
+Spatial statistical models exploit spatial autocorrelation but the models are silent on the reason for the autocorrelation.
+
+# Quantifying spatial autocorrelation
+
+Spatial autocorrelation is quantified by calculating how similar a value in region (polygon feature) $i$ is to the value in region $j$ and weighting this similarity by how close region $i$ is to region $j$. The closer the regions are together the greater the weight.
+
+High similarities with high weight (similar values close together) yield high values of the index. Low similarities with high weight (dissimilar values close together) yield low values of the index. 
+
+Let $\hbox{sim}_{ij}$ denote the similarity between values $Y_i$ and $Y_j$, and let $w_{ij}$ denote a weight describing the proximity between regions $i$ and $j$, for $i$, $j$ = 1, ..., $N$. Then a spatial autocorrelation index (sai) is given by
+$$
+\hbox{sai}_{ij} = \frac{\sum_{i=1}^N \sum_{j=1}^N w_{ij}\hbox{sim}_{ij}}{\sum_{i=1}^N \sum_{j=1}^N w_{ij}}
+$$
+which represents the weighted average similarity between regions. The collection of weights is called a spatial weights matrix and defines the neighborhoods for each region.
+
+For regions on a rectangular grid under the *rook contiguity* criterion, $w_{ij}$ = 1 if regions $i$ and $j$ share a boundary, and 0 otherwise. This choice results in a symmetric matrix of weights since $w_{ij}$ = $w_{ji}$. Also a region is not a neighbor to itself so $w_{ii}$ = 0.
+
+Alternatively we can define a centroid for each region and let $w_{ij}$ = 1 if the centroid of region $i$ is near the centroid of region $j$ and 0 otherwise. In this case we decide on the number of nearest neighbors to define neighborhoods. The k-nearest neighbor method can result in a non-symmetric weight matrix because the distances to the kth nearest neighbor may be different for each centroid.
+
+We can also define the neighbors by distance. For example, if $d_{ij}$ is the distance between centroids of regions $i$ and $j$, we could let $w_{ij}$ =  1 if $d_{ij}$ < $\delta$ and 0 otherwise. This approach produces a symmetric weights matrix.
+
+Let's return to the Columbus, OH crime data but this time as polygon data (census tracts).
+
+### Columbus crime
+
+```{r}
+download.file("http://myweb.fsu.edu/jelsner/temp/data/columbus.zip",
+              "columbus.zip", mode = "wb")
+unzip("columbus.zip")
+spdf = readOGR(dsn = "columbus", 
+               layer = "columbus")
+```
+
+Create a choropleth map of the crime rate by census tract. Residential burglaries and vehicle thefts per 1000 households.
+```{r}
+brks = round(quantile(spdf$CRIME, 
+                      probs = seq(0, 1, .2)))
+cr = rev(brewer.pal(5, "PiYG"))
+spplot(spdf, "CRIME", col.regions = cr, at = brks, 
+            colorkey = list(space = "bottom", 
+                            labels = paste(brks)),
+            sub = "Burglary & Vehicle Theft/1000 Households")
+```
+
+High crime areas tend to cluster. Spatial autocorrelation quantifies this clustering. The first step towards quantification is to define a list of neighbors for each polygon.
+
+### List of neighbors
+
+Given a spatial polygons data frame we create a list of neighbors using the `poly2nb()` function from the **spdep** package.
+```{r}
+neighbors = poly2nb(spdf)
+neighbors
+```
+
+The `nb` stands for neighbor list object. The function builds the list from regions based on contiguity. That is neighbors must share one or more boundary points. Caution: With a large number of polygons and detailed boundaries it can take some time to generate the list.
+
+There are 49 tracts. Each tract is bordered by at least one other tract (each region has at least one neighbor), which may not always be the case. The average number of neighbors is 4.8. The total number of neighbors over all tracts is 236. This represents 9.8% of all possible connections (if every tract is a neighbor of itself and every other tract 49*49).
+
+A graph of the links (network) is obtained as follows.
+```{r}
+plot(neighbors, coordinates(spdf))
+```
+
+The arguments include the neighbor list object and the location of the polygon centroids. Location of the centroids are extracted from the spatial object with the `coordinates()` function.
+
+The graph is a network displaying the contiguity pattern (topology). Tracts in the center of the city have more neighbors than those on the outskirts.
+
+The number of links per node (tract)--link distribution--is obtained by typing
+```{r}
+summary(neighbors)
+``` 
+
+The list of neighboring tracts for the first two tracts.
+```{r}
+neighbors[[1]]; neighbors[[2]]
+```
+
+The first tract has two neighbors, tracts 2 and 3. The neighbor numbers are stored as an integer vector. Tract 2 has three neighbors, tracts 1, 3, and 4. 
+
+Tract 5 has 8 neighbors and so on.
+```{r}
+neighbors[[5]]
+```
+
+The function `card()` tallies the number of neighbors by tract.
+```{r}
+card(neighbors)
+```
+
+The tracts are identified by region id from the spatial polygons data frame. 
+```{r}
+attr(neighbors, "region.id")
+```
+
+The region id is a character vector with elements from "0" to "48".
+
+By default the contiguity is defined as having at least one point in common. This can be changed to more than one point by using the argument `queen = FALSE` in the `poly2nb()` function.
+
+### Weights
+
+Before spatial autocorrelation can be quantified the neighbor list object needs to be appended with weights specifying how much weight to give to each link.
+
+The function `nb2listw()` function turns the neighbors list object into a spatial weights object.
+```{r}
+wtsnbs = nb2listw(neighbors)
+class(wtsnbs)
+```
+
+The `wtsnbs` object is a list with two elements. The first element (`listw`) is the weights matrix and the second element (`nb`) is the neighbor list object.
+```{r}
+summary(wtsnbs)
+```
+
+The network statistics are given along with information about the weights. By default all neighboring tracts are assigned equal weights (`style = "W"`). For a tract with 5 neighbors each neighbor gets a weight of 1/5. The sum over all weights (`S0`) is the number of tracts.
+
+To see the weights for the first two tracts type
+```{r}
+wtsnbs$weights[1:2]
+```
+
+This is called a sparse representation of the spatial weights matrix. The full matrix would be 49 x 49.
+
+To see the neighbors of the first two tracts type
+```{r}
+wtsnbs$neighbours[1:2]
+```
+
+Tract 1 has two neighbors (tract 2 & 3) so each are given a weight of 1/2. Tract 2 has three neighbors (tract 1, 3, & 4) so each are given a weight of 1/3.
+
+With the neighbors and weights matrix specified and saved as a single object we are ready to compute a metric of spatial autocorrelation.
+
+Caution: Contiguity can result in areas having no neighbors; islands for example. By default the `nb2listw()` function assumes each area has at least one neighbor. If not we need to specify how these areas are handled with the argument `zero.policy = TRUE`. This assigns a zero to the lagged values computed using the `listw` object for areas without neighbors.
+
+# Moran's I (L18)
+
+igh crime areas tend to cluster. Use the `moran()` function from the **spdep** package to quantify the amount of clustering. First create a list of neighbors using the `poly2nb()` function and then specify the weights. By default the neighbors are determined by "queen" contiguity and each neighbor is given a weight equal to the inverse of the number of neighbors (row standardized).
+```{r}
+nbs = poly2nb(spdf)
+wts = nb2listw(nbs)
+```
+
+queen contiguity: refers to touchinng at atleast onne point. 
+
+Next save the number of polygons and the summation over all the weights. The `moran()` function requires these along with the vector of values and the `listw` object.
+```{r}
+m = length(spdf$CRIME)
+s = Szero(wts)
+moran(spdf$CRIME, 
+      listw = wts, 
+      n = m, S0 = s)
+```
+
+The function returns the Moran's I statistic and the kurtosis (K). Moran's I ranges from -1 to +1. A value of .5 indicates a high level of spatial autocorrelation. This was anticipated based on our visual inspection of the crime showing pockets of higher and lower rates. Positive values of Moran's I indicate clustering and negative values indicate 'inhibition'.
+
+totally random is a 0
+checkerboard would be negative correlation because it is seperated by one unit. 
+
+Kurtosis is a statistic measuring the peakedness of the distribution of the attribute values. A normal distribution has a kurtosis of 3. If the kurtosis is too large or too small relative to a normal distribution then the inferences we make with Moran's I may be suspect.
+
+normal distribution has a kurtosis of 3
 
 
 
+There is less clustering of housing values and somewhat less clustering in household income.
+```{r}
+moran(spdf$HOVAL, 
+      listw = wts, 
+      n = m, S0 = s)
+moran(spdf$INC, 
+      listw = wts, 
+      n = m, S0 = s)
+```
+
+Another way to quantify spatial autocorrelation is with the Geary's C statistic. The equation is 
+$$
+\hbox{C} = \frac{(N-1) \sum_{i} \sum_{j} w_{ij} (Y_i-Y_j)^2}{2 W \sum_{i}(Y_i-\bar Y)^2} 
+$$
+
+We instantiate the `geary()` function in a way similar to the `moran()` function except here we also specify `n1` to be the number of polygons minus one.
+```{r}
+geary(spdf$CRIME, 
+      listw = wts,
+      n = m, S0 = s, 
+      n1 = m - 1)
+```
+
+Values for C range from 0 to 2 with 1 indicating no spatial autocorrelation. Values less than 1 indicate positive autocorrelation. Both I and C are global measures of autocorrelation, but C is more sensitive to local variations in autocorrelation. 
+
+If the interpretation of C is much different than the interpretation of I then consider local measures of spatial autocorrelation.
+
+# Spatial lag (L18)
+
+Insight into spatial autocorrelation is obtained by noting that Moran's I is the slope coefficient from a regression of the weighted average of the neighborhood values onto the observed values. The weighted average of neighborhood values is called the spatial lag.
+
+Let crime be the set of crime values in each region. We create a spatial lag variable using the `lag.listw()` function. The first argument is the `listw` object and the second is the vector of crime values.
+```{r}
+crime = spdf$CRIME
+Wcrime = lag.listw(wtsnbs, crime)
+```
+
+For each value in the vector crime there is a corresponding value in the vector object `Wcrime` representing the average crime over the neighboring regions.
+
+Recall tract 1 had tract 2 and 3 as neighbors. So the follow should return a TRUE.
+```{r}
+Wcrime[1] == (crime[2] + crime[3])/2
+```
+
+A scatter plot of the neighborhood average crime versus the crime in each region shows there is a relationship.
+```{r}
+data.frame(crime, Wcrime) %>%
+ggplot(., aes(x = crime, y = Wcrime)) + 
+  geom_point() + 
+  geom_smooth(method = lm) +
+  scale_x_continuous(limits = c(0, 70)) +
+  scale_y_continuous(limits = c(0, 70)) +
+  xlab("Crime") + ylab("Spatial Lag of Crime")
+```
+
+Tracts with low values of crime tend to be surrounded by tracts with low values of crime on average and tracts with high values of crime tend be surrounded by tracts with high values of crime. The range of neighborhood averages is smaller. There are a few outliers.
+
+The slope of the regression line is the value of Moran's I. To check this type
+```{r}
+lm(Wcrime ~ crime)
+```
+
+# Statistical significance of spatial autocorrelation (L19)
+
+Let's consider another data set. Sudden infant death syndrome rates in North Carolina counties. The data are from: Cressie, Noel (1993). Statistics for Spatial Data. New York, Wiley, pp. 386-389.
+```{r}
+download.file("http://myweb.fsu.edu/jelsner/temp/data/sids2.zip",
+              "sids2.zip", mode = "wb")
+unzip("sids2.zip")
+spdf = readOGR(dsn = "sids2", layer = "sids2")
+head(spdf@data)
+```
+
+The column `SIDR79` contains the death rate per 1000 live births (1979-84) from sudden infant death syndrome. Create a choropleth map of the SIDS rates.
+```{r}
+range(spdf$SIDR79)
+brks = seq(0, 7, 1)
+cr = brewer.pal(7, "PuBu")
+spplot(spdf, "SIDR79", col.regions = cr, at = brks, 
+            colorkey = list(space = "bottom"),
+            sub = "SIDS Rates 1979-84 [per 1000]")
+
+```
+
+Create a neighborhood list (`nb`) and a `listw` object (`wts`). Graph the neighborhood network.
+```{r}
+nb = poly2nb(spdf)
+wts = nb2listw(nb)
+plot(nb, coordinates(spdf))
+plot(spdf, add = TRUE)
+```
+
+Next compute Moran's I
+```{r}
+m = length(spdf$SIDR79)
+s = Szero(wts)
+moran(spdf$SIDR79, 
+      listw = wts, 
+      n = m, S0 = s)
+```
+
+I is .14 and K is 4.4. A normal distribution has a kurtosis of 3. Values less than about 2 or greater than about 4 indicate that inferences about autocorrelation based on the assumption of normality are suspect.
+
+Weights are specified using the `style =` argument in the `nb2listw()` function. The default "W" is row standardized (sum of the weights over all links equals the number of polygons). "B" is binary (each neighbor gets a weight of one). "S" is a variance stabilizing scheme (Tiefelsdorf et al. 1999). 
+
+Each style gives a somewhat different value for I.
+```{r}
+x = spdf$SIDR79
+moran.test(x, nb2listw(nb, style = "W"))$estimate[1]
+moran.test(x, nb2listw(nb, style = "B"))$estimate[1]  # binary
+moran.test(x, nb2listw(nb, style = "S"))$estimate[1]  # variance-stabilizing
+```
+
+Thus when we report a Moran's I we need to state what weighting scheme was used.
+
+Let `sids` be the SIDS rate in each region. We create a spatial lag variable using the `lag.listw()` function. The first argument is the `listw` object and the second is the vector of crime values.
+```{r}
+sids = spdf$SIDR79
+Wsids = lag.listw(wts, sids)
+```
+
+For each value in the vector `spdf$SIDR79` there is a corresponding value in the object `Wsids` representing the neighborhood average SIDS rate. 
+```{r}
+Wsids[1]
+j = wts$neighbours[[1]]
+j
+sum(spdf$SIDR79[j])/length(j)
+```
+
+The weight for county one is `Wsids[1]` = 2.659. The neighbor indices for this county are in the vector `wts$neighbours[[1]]` of length 3. Add the SIDS rates from those counties and divide by the length.
+
+A scatter plot of the neighborhood average SIDS rate versus the actual SIDS rate in each region.
+```{r}
+data.frame(sids, Wsids) %>%
+ggplot(., aes(x = sids, y = Wsids)) + 
+  geom_point() + 
+  geom_smooth(method = lm) +
+  scale_x_continuous(limits = c(0, 7)) +
+  scale_y_continuous(limits = c(0, 7)) +
+  xlab("SIDS") + ylab("Spatial Lag of SIDS")
+```
+The poinnts in y is always going to be less than the length of poinnts through x
 
 
+The slope of the regression line is upward indicating positive autocorrelation. The value of the slope is I. To check this type
+```{r}
+lm(Wsids ~ sids)
+```
 
+Is the value of Moran's I significant with respect to the null hypothesis of no spatial autocorrelation (I = 0)? One way to answer this question is to draw an uncertainty band on the regression line and see if a horizontal line can be put through the band. If not, then I is statistically different from zero.
+
+More formally the question is answered by comparing the standard deviate ($z$-value) of the I statistic with a normal deviate. This is done using the `moran.test()` function, where the $z$-value is the difference between I and the expected value of I divided by the square root of the variance of I. The function takes a variable name or numeric vector and a spatial weights list object in that order as required arguments.
+```{r}
+moran.test(spdf$SIDR79, wts)
+```
+
+I is .143 with a variance of .0042. The $z$-value for the I statistic is 2.3438 giving a small $p$-value under the assumption of no spatial autocorrelation.  
+
+Thus we conclude there is weak but significant spatial autocorrelation in SIDS rates across North Carolina at the county level.
+```{r}
+pnorm(2.3438, lower.tail = FALSE)
+```
+
+Under the assumption of normal distributed and uncorrelated data, the expected value for Moran's I is -1/(n-1) where n is the number of counties. A check on the distribution of SIDS rates indicates that normality is somewhat suspect. Recall a good way to check the normality assumption is to use the `sm.density()` function/
+```{r}
+sm::sm.density(spdf$SIDR79, model = "Normal",
+           xlab = "SIDS Rates 1979-84 [per 1000]")
+```
+
+Note that the SIDS rates are more "peaked" (higher kurtosis) than a normal distribution. In this case it is best to use a permutation approach to assess significance.
+
+# Monte Carlo approach
+
+The `moran.mc()` function allows inference on I without the assumption of normally distributed data values. MC stands for Monte Carlo which refers to the city of Monte Carlo in Monaco famous for its gambling casinos. The MC procedure refers to random sampling.
+
+The name of the data vector and the weights list object (`listw`) are required arguments as is the number of permutations (`nsim`). Each permutation is a random rearrangement of the SIDS rates across the counties. This removes the spatial autocorrelation but keeps the non-spatial distribution of the SIDS rates. The neighbor topology and weights remain the same.
+
+For each permutation (random shuffle), I is computed and saved. The $p$-value is obtained as the ratio of the number of permuted I values greater or exceeding the observed I over the number of permutation plus one. In the case where there are 5 permuted I values greater or equal to the observed value based on 99 simulations, the $p$-value is 5/(99 + 1) = .05.
+
+For example, if you want inference on I using 99 permutations type
+```{r}
+set.seed(4102)
+mP = moran.mc(spdf$SIDR79, listw = wts, nsim = 99)
+mP
+```
+
+Two of the permutations yield a Moran's I greater than 0.1428, hence the $p$-value as evidence in support of the null hypothesis (the true value for Moran's I is zero) is 0.02.
+
+Note: Here we initiate the random number generator to a specific seed value so that the set of random permutations of the values across the domain will be the same each time we knit this Rmd. This is important for reproducibility. The default random number generator seed value is determined from the current time (internal clock) and so no random permutations will be identical. To control the seed use the `set.seed()` function.
+
+The values of I computed for each permutation are saved in the vector `mP$res`.
+```{r}
+head(mP$res)
+tail(mP$res)
+```
+
+The last value in the vector is I computed using the data in the correct counties. The $p$-value as evidence in support of the null hypothesis that I is zero is given as
+```{r}
+sum(mP$res > mP$res[100])/99
+```
+
+A density graph displays the distribution of permuted I's. First, rerun using 999 simulations. Then plot a density curve and add a vertical line at the value of Moran's I computed from the data at the actual locations.
+```{r}
+mP = moran.mc(spdf$SIDR79, wts, nsim = 999)
+df = data.frame(mp = mP$res[-1000])
+ggplot(df, aes(mp)) + 
+  geom_density() + 
+  geom_rug() + 
+  geom_vline(xintercept = mP$res[1000], 
+             color = "red", size = 2)
+```
+
+The density curve is centered just to the left of zero consistent with the theoretical expectation (mean) of -.01. Also note that the right tail is fatter than the left tail. This is due to the skewness of the rates used in the calculation of I.
+
+What do you do with the knowledge that the SIDS rates have significant spatial autocorrelation? By itself not much but it can provide notice that something might be going on in certain regions (hot spot analysis).
+
+More typically the knowledge is useful after other known factors are considered. Or in the language of statistics, knowledge of significant spatial autocorrelation in the model residuals can help you build a better model.
+
+# Spatial autocorrelation of model residuals
+
+A spatial regression model is needed whenever the residuals from a non-spatial regression model exhibit significant spatial autocorrelation. So a common way to proceed is to first regress the response variable onto the explanatory variables and check for spatial autocorrelation.
+
+Even if the response variable indicates a high level of spatial autocorrelation it might not be necessary to use a spatial regression model if the explanatory variables remove this correlation.
+
+Let's return once again to the Columbus crime data.
+```{r}
+download.file("http://myweb.fsu.edu/jelsner/temp/data/columbus.zip",
+              "columbus.zip", mode = "wb")
+unzip("columbus.zip")
+spdf = readOGR(dsn = "columbus", 
+               layer = "columbus")
+```
+
+Next model the data with linear regression.
+```{r}
+model = lm(CRIME ~ INC + HOVAL, 
+           data = spdf)
+summary(model)
+```
+
+The model explains 55% of the variation in crime. As income and housing values increase crime goes down. The model is statistically significant.
+
+A check on the model residuals reveals no issue with normality.
+```{r}
+sm::sm.density(residuals(model), model = "Normal")
+```
+
+positive underpredicts negative overpredicts
+yes, amount of clustering appears to be less
+
+
+The next step is to create a choropleth map of the model residuals. Are the residuals clustered?
+```{r}
+spdf$resids = residuals(model)
+range(spdf$resids)
+brks = seq(-40, 40, 10)
+cr = brewer.pal(8, "PuOr")
+spplot(spdf, "resids", col.regions = cr, at = brks, 
+            colorkey = list(space = "bottom"),
+            sub = "Linear Model Residuals\n Burglary & Vehicle Theft/1000 Households")
+
+```
+dependent of the model not actual values so in nnext chunk you MUST do morantest
+
+Yes. There are clustered regions where the model over predicts crime based on household income and housing values (orange regions, southwest) and where it under predicts crime (purple regions).
+
+The amount of clustering appears to be less than before. That is, after accounting for regional factors related to crime the spatial autocorrelation is reduced.
+
+positive underpredicts negative overpredicts
+yes, amount of clustering appears to be less
+
+To determine I on the residuals we use the `lm.morantest()` function and pass the regression model object and the weights object to it.
+```{r}
+nbs = poly2nb(spdf)
+wts = nb2listw(nbs)
+lm.morantest(model, wts)
+```
+
+Moran's I on the model residuals is .222.  This compares with the value of .5 on crime alone. Part of the spatial autocorrelation is absorbed by the explanatory factors.
+
+Do we need a spatial regression model?  The output gives a $p$-value on I of .002, thus we reject the null hypothesis of no spatial autocorrelation in the residuals and conclude that a spatial regression model would improve the fit.  
+
+The $z$-value takes into account the fact that these are residuals so the variance is adjusted accordingly.
+
+The next step is to choose a spatial regression model.
+
+# Local indicators of spatial autocorrelation (L19)
+
+The Moran's I statistic was first used in the 1950s. Localization of this statistic was first presented by Luc Anselin in 1995 (Anselin, L. 1995. Local indicators of spatial association, Geographical Analysis, 27, 93–115).
+
+Local I is a deconstruction of global I where the neighborhood defined by contiguity is used in two ways. (1) defines and weights neighbor and (2) determines the spatial scale over which I is computed.
+
+The file *police.zip* contains shapefiles in a folder called *police* on my website. The variables include police expenditures (`POLICE`), crime (`CRIME`), income (`INC`), unemployment (`UNEMP`) and other socio-economic characteristics for counties in Mississippi.
+
+The police expenditures are per capita, 1982 (dollars per person). The personal income per county resident, 1982 (dollars per person). The crime is the number of serious crimes per 100,000 residents, 1981. The unemployment is percent unemployed in 1980.
+
+Read the data as a spatial polygons data frame.
+```{r}
+download.file("http://myweb.fsu.edu/jelsner/temp/data/police.zip",
+                    "police.zip")
+unzip("police.zip")
+spdf = readOGR(dsn = "police", layer = "police")
+```
+
+Using queen's contiguity determine the neighborhood topology and the weights.
+```{r}
+nbs = poly2nb(spdf)
+wts = nb2listw(nbs)
+round(listw2mat(wts)[1:5, 1:10], 2)
+```
+
+The weights in full matrix form show that the first county ("0") has three neighbors 2, 3, and 9 and each get a weight of 1/3. County "2" has four neighbors 1, 4, 9 and 10 and each gets a weight of 1/4.
+
+Compute Moran's I on the percent white.
+```{r}
+moran(spdf$WHITE, listw = wts, 
+      n = length(nbs), S0 = Szero(wts))
+```
+
+Compute local Moran's I.
+```{r}
+Ii_stats = localmoran(spdf$WHITE, wts)
+str(Ii_stats)
+```
+
+The local I is given in the first column of a matrix where the rows are the counties. The other columns are the expected value for I, the variance of I, the z-value and the p-value. For example, the local I statistics from the first county are given by typing
+```{r}
+Ii_stats[1, 1:5]
+```
+
+Because these local values must average to the global value, they can take on values outside the range between -1 and 1. A summary() method on the first column of the Li  object gives statistics from the non-spatial distribution of I's.
+```{r}
+summary(Ii_stats[, 1])
+```
+
+To map the values we first attach the matrix columns of interest to the spatial polygons data frame. Here we attach Ii, Zi, and Pi.
+```{r}
+spdf$Ii = Ii_stats[, 1]
+spdf$Zi = Ii_stats[, 4]
+spdf$Pi = Ii_stats[, 5]
+```
+
+```{r}
+rng = seq(-3, 3, .75)
+cls = brewer.pal(9, "PiYG")
+spplot(spdf, "Ii", col.regions = cls, at = rng)
+```
+local I: segregation largest in NE and the MS delta
+
+Compare with a map of percent white. 
+```{r}
+range(spdf$WHITE)
+rng = seq(10, 100, 10)
+cls = rev(brewer.pal(9, "YlOrBr"))
+spplot(spdf, "WHITE", col.regions = cls, at = rng)
+```
+
+Areas where percent white is high over the northeast are areas with the largest spatial correlation. Other areas of high spatial correlation include the Mississippi Valley and in the south. Note the county with the most negative spatial correlation is the county in the northwest with a fairly high percentage of whites neighbored by counties with much lower percentages.
+
+# Spatial classes
+
+We've worked with spatial polygons as one type of spatial data but the **sp** package provides classes and methods for working with other types of spatial data. We finish the semester with more about the various spatial data types in R. This material is from Pebesma and Bivand (2005).
+
+Spatial data classes include points, grids, lines, rings and polygons. The **sp** package provides classes for the spatial-only information (topology), e.g. `SpatialPoints` object, `SpatialPolygons` object, etc. It also has extensions to these classes in cases where there is attribute information stored in a data frame, e.g. `SpatialPointsDataFrame`. 
+
+That is a `SpatialPointsDataFrame` object extends a `SpatialPoints` object by adding an attribute table as a data frame to the data slot. In the same way a `SpatialLinesDataFrame` object extends a `SpatialLines` object.
+
+### Manipulating spatial objects
+
+Entries in spatial objects are accessible through a slot name. For example, `x@coords` contains the coordinates of the object `x` of class `SpatialPoints` and its extensions. Entries are best accessed using functions. In this case `coordinates()` to retrieve the coordinates.
+
+Subsetting the spatial object is done with the subset operator `[]`. For example, to subset only those polygons where percent white exceeds 80 use
+```{r}
+plot(spdf[spdf$WHITE > 80, ])
+```
+
+The subset operator works on the attribute table and on the geometry.
+
+To subset only the first two polygons use
+```{r}
+spdf2 = spdf[1:2, ]
+plot(spdf2)
+```
+
+To subset only the first four polygons and save only the data column `WHITE` use
+```{r, eval=FALSE}
+spdf3 = spdf[1:4, "WHITE"]
+head(spdf3)
+```
+
+The subset on list operator `[[]]` selects a column from the attribute table. It is also used to assign or replace values to a column in the table. For example
+```{r}
+hist(spdf[["WHITE"]])
+```
+
+Other methods include `plot()`, `summary()`, `print()`, `dim()`, and `names()`, `as.data.frame()`, `as.matrix()` and `image()` (for gridded data), and `length()` (number of features).
+
+Additional *spatial* methods are available for the classes in **sp**. For example: `dimensions()` returns the number of spatial dimensions, `y = spTransform(x, CRS("+proj=longlat +datum=WGS84"))` transform from one coordinate reference system (geographic projection) to another (requires package **rgdal**), `bbox(x)` returns a matrix with the coordinates bounding box; the dimensions form rows, min/max form the columns, `coordinates()` returns a matrix with the spatial coordinates, `gridded()` tells whether `x` derives from `SpatialPixels()`.
+
+* The `spplot()` method as we've used makes a map of an attribute. It can do this in combination with other types of data (points, lines, grids, polygons).
+
+* The `over()` method combines two spatial layers of differing types, e.g. retrieve the polygon or grid indexes on a set of points.
+
+* The `spsample()` function samples geometries. For example, it can be used to create a sample of points within a polygon, a gridded area, or on a spatial line.
+
+### Spatial points
+
+Most of the time there is no need to create a spatial object as the data will be input as such. However it is helpful to understand a bit about how spatial data are constructed and stored. 
+
+We start by generating a set of 10 points on a unit square [0, 1] x [0, 1] by
+```{r}
+xc = round(runif(10), digits = 2)
+yc = round(runif(10), digits = 2)
+xy = cbind(xc, yc)
+xy
+```
+
+This 10 x 2 matrix is converted to a `SpatialPoints` object by
+```{r}
+xy.sp = SpatialPoints(xy)
+xy.sp
+plot(xy.sp)
+```
+
+We retrieve the coordinates from `xy.sp` as a matrix by
+```{r}
+xy.cc = coordinates(xy.sp)
+class(xy.cc)
+dim(xy.cc)
+```
+
+Other methods include: retrieve the bounding box or the dimensions.
+```{r}
+bbox(xy.sp)
+dimensions(xy.sp)
+```
+
+Subset points and coerce to a data frame.
+```{r}
+xy.sp[1:2]
+xy.df = as.data.frame(xy.sp)
+class(xy.df)
+dim(xy.df)
+summary(xy.sp)
+```
+
+#### Attributes
+
+You can create a `SpatialPointsDataFrame` by building it from a `SpatialPoints` object together with a data frame containing the attributes.
+```{r}
+df = data.frame(z1 = round(5 + rnorm(10), 2), 
+                z2 = 20:29)
+df
+```
+
+Create a `SpatialPointsDataFrame` by combining the data frame with the `SpatialPoints` object.
+```{r}
+xy.spdf = SpatialPointsDataFrame(xy.sp, df)
+xy.spdf
+summary(xy.spdf)
+```
+
+Select row 1 and 2.
+```{r}
+xy.spdf[1:2, ]
+```
+
+Select attribute in column 1 along with the coordinates.
+```{r}
+xy.spdf[1]
+```
+
+Select rows 1 and 2 of attribute `z2`.
+```{r}
+xy.spdf[1:2, "z2"]
+```
+
+Coerce to data frame.
+```{r}
+xy.df = as.data.frame(xy.spdf)
+xy.df[1:2, ]
+```
+
+Extract the coordinates.
+```{r}
+xy.cc = coordinates(xy.spdf)
+class(xy.cc)
+```
+
+The subset behavior is copied from that of data frames, but coordinates are always sticky (stay with attribute rows) and a `SpatialPointsDataFrame` is always returned. If coordinates need to be dropped, use the `as.data.frame()` method.
+
+If data are stored in a spreadsheet where the spatial coordinates are given alongside the attributes as columns (very common), a spatial points data frame object is created by specifying the columns containing the coordinates.
+```{r}
+df1 = data.frame(xy, df)
+head(df1)
+coordinates(df1) = c("xc", "yc")
+class(df1)
+df1[1:6, ]
+```
+
+Or
+```{r}
+df2 = data.frame(xy, df)
+coordinates(df2) = ~ xc + yc
+df2[1:2, ]
+```
+
+Here an object of class data frame is promoted to an object of class `SpatialPointsDataFrame` using the `coordinates()` function.
+
+Elements (columns) in the data frame part of a spatial object can be manipulated (retrieved, assigned) directly.
+```{r}
+df2$z2
+df2$z2[10] = 20
+df2$z3 = 1:10
+summary(df2)
+```
+
+We can plot attribute data using either `spplot()` or `bubble()` which uses symbol size.
+```{r}
+bubble(df2, "z1", key.space = "bottom")
+```
+
+```{r}
+spplot(df2, "z1", col.regions = rainbow(5), 
+       key.space = "bottom")
+```
+
+# ggplot method
+
+We can use `ggplot()` to make choropleth maps but some work is needed. Let's return to the police expenditure data from counties in Mississippi. Read the data as a spatial polygons data frame.
+```{r, eval=FALSE}
+download.file("http://myweb.fsu.edu/jelsner/temp/data/police.zip",
+                    "police.zip")
+unzip("police.zip")
+spdf = readOGR(dsn = "police", layer = "police")
+```
+
+First add row names as an attribute to the spatial polygons data frame. Here the row names are character strings from "0" to "81"
+```{r}
+rownames(spdf@data)
+spdf$id = rownames(spdf@data)
+```
+
+Next, create a data frame of the county boundaries and join them to the attribute data frame. The join is made by `id` with the `inner_join()` function from the **dplyr** package.
+```{r}
+library(rgeos)
+library(ggplot2)
+df = as.data.frame(spdf)
+fort = fortify(spdf)
+line.df = dplyr::inner_join(fort, df, by = "id")
+```
+
+Create map. The `line.df` is the first argument and the aesthetics include the x, y coordinates, the group, and fill arguments.
+```{r}
+ggplot(line.df, 
+       aes(x = long, y = lat, group = group, fill = INC)) +
+  geom_polygon() +
+  coord_equal()
+```
+
+The longitudes and latitudes define the polygons, the `group` indicates the order in which the counties are plotted (as a single continuous overlapping, self-intersecting polygon), and the fill is the color. Here the color is based on the value of income (`INC`). 
+
+Note that the names given to the spatial coordinates from the `fortify()` function are longitude and latitude even though they represent projected coordinates with units of kilometers.
+
+Make it better.
+```{r}
+ggplot(line.df, 
+       aes(x = long, y = lat, group = group, 
+           fill = INC)) +
+  geom_polygon() +
+  coord_equal() +
+  geom_path(color = "gray75") + 
+  theme(panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text = element_blank()) +
+#        labs(title = "Income") + 
+        xlab("") + ylab("") +
+  scale_fill_gradient2("Median Income [$]") 
+```
+
+## Rasters
+
+A raster is a spatial data structure that divides a region into rectangles called 'cells' (or 'pixels') that can store one or more values for each of these cells. 
+
+Such a data structure is also referred to as a 'grid' and is often contrasted with 'vector' data that is used to represent points, lines, and polygons.
+
+The **raster** package developed by Robert Hijmans has functions for creating, reading, manipulating, and writing raster data. This tutorial is based on the package vignette.
+```{r}
+library(raster)
+```
+
+Functions in **raster** depend on functions in **sp**. The package implements raster algebra and most functions for raster data manipulation that are common in Geographic Information Systems (GIS). These functions are similar to those in GIS programs such as Idrisi, the raster functions of GRASS, and the 'grid' module of ArcInfo ('workstation'). It has the ability to work with raster data from a file without importing the file to R. 
+
+### Classes
+
+The package is built with S4 classes with `RasterLayer`, `RasterBrick`, and `RasterStack` classes the most important. A `RasterLayer` object represents single-layer (variable) raster data. A `RasterLayer` object stores the number of columns and rows, the coordinates of its spatial extent ('bounding box'), and the coordinate reference system (the 'map projection').
+
+In addition, a `RasterLayer` can store information about the file in which the raster cell values are stored (if there is such a file). A `RasterLayer` can also hold the raster cell values in memory.
+
+It is common to analyze raster data using single-layer objects. However, in many cases multi-variable raster data sets are used. The **raster** package has two classes for multi-layer data the `RasterStack` and the `RasterBrick`. 
+
+The main difference is that a `RasterBrick` can only be linked to a single (multi-layer) file. In contrast, a `RasterStack` can be formed from separate files and/or from a few layers ('bands') from a single file.
+
+### Creating a raster object
+
+The default settings will create a global raster data structure with a longitude/latitude coordinate reference system and 1 by 1 degree cells. 
+
+We can change these by providing additional arguments such as `xmin`, `nrow`, `ncol`, and/or `crs`, to the function. We can also change these after creating the object. If you set the projection. Note that setting the projection is simply to define it not to change it. To transform a RasterLayer to another coordinate reference system (projection) we can use the function `projectRaster()`.
+
+Let's create a raster.
+```{r}
+x = raster()
+x
+```
+
+With other parameters.
+```{r}
+x = raster(ncol = 36, nrow = 18, 
+           xmn = -100, xmx = 0, 
+           ymn = 0, ymx = 50)
+res(x)
+res(x) = 3
+x
+ncol(x)
+ncol(x) = 18
+res(x)
+```
+
+Define the map projection by setting the coordinate reference system (CRS). 
+```{r}
+projection(x) = "+proj=utm +zone=48 +datum=WGS84"
+x
+```
+
+UTM is the Universal Transverse Mercator projection system.
+
+The object `x` is a skeleton (scaffold) raster with no values associated with the pixels. To add values to the raster
+```{r}
+r = raster(ncol = 10, nrow = 10)
+ncell(r)
+hasValues(r)
+values(r) = runif(ncell(r))
+inMemory(r)
+plot(r)
+projection(r) = "+proj=utm +zone=48 +datum=WGS84"
+plot(r)
+```
+
+
+##GRAPHING
 
 Facet_wrap: 
-```{r}
+```{r, eval = FALSE}
 ggplot(kid.weights, aes(x = height, y = weight)) + 
   geom_point() + 
   facet_grid(~ gender)
