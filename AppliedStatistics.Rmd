@@ -11,7 +11,2225 @@ suppressMessages(library(ggplot2))
 suppressMessages(library(dplyr))
 suppressMessages(library(reshape2))
 suppressMessages(library(ISwR))
+suppressMessages(library(LearnBayes))
+suppressMessages(library(sp))
+suppressMessages(library(rgdal))
+suppressMessages(library(rgeos))
+suppressMessages(library(spData))
+suppressMessages(library(tmap))
 ```
+
+# Spatial classes
+
+I try to teach the state-of-the-art in the field while making sure the methods will be around tomorrow. R's spatial ecosystem is evolving. Because it's open source, these developments build on earlier work. This encourages collaboration and avoids 'reinventing the wheel'.
+
+The **sp** package provides methods for working with spatial data as vectors. Some of the packages for analyzing and modeling spatial data we use this semester depend on **sp**. Check out [sp](http://cran.r-project.org/web/packages/sp/index.html) and note the number of packages that depend on **sp** (reverse depends).
+
+The *vector data model* represents the world using points, lines and polygons. These objects have discrete, well-defined borders, meaning that vector datasets usually have a high level of precision (note precision does not necessarily imply accuracy). 
+
+The *raster data model*, by contrast, divides the world into a grid of cells of constant size (resolution). The raster model is ideal for representing continuous phenomena such as elevation or rainfall. Rasters aggregate specific features to a given resolution, meaning that they are consistent over space and scalable (many worldwide raster datasets are available). The downside of this is that the smallest features are blurred or lost.
+
+The choice between vector and raster representations depends on application:
+
+* Vector data tends to dominate the social sciences because human settlements and boundaries have discrete borders.
+* Raster data often dominates the environmental sciences because these often use remotely sensed imagery.
+
+However, there is overlap: ecologists and demographers, for example, commonly use both vector and raster data. This class uses the **sp** and **sf** packages to work with vector data and the **raster** packages to work with raster datasets.
+
+Install and load the package.
+```{r}
+library(sp)
+```
+
+Spatial objects from the **sp** package fall into two types: 1) spatial-only information (the topology). These include `SpatialPoints`, `SpatialLines`, `SpatialPolygons`, etc, and 2) extensions to these cases where attribute information is available and stored in a data frame. These include `SpatialPointsDataFrame`, `SpatialLinesDataFrame`, etc.
+
+# Coordinate reference system (L3)
+
+Coordinates can only be placed on the Earth's surface when their coordinate reference system (CRS) is known; this may be an elipsoidal CRS such as WGS84, a projected, two-dimensional (Cartesian) CRS such as a UTM (Universal Transverse Mercator) zone or a CRS in three dimensions or including time.
+
+When data have different CRSs we need to transform them to a common CRS. In S4 spatial objects, CRS information is available in the `proj4string` slot.
+```{r}
+if (!file.exists("torn")) { 
+  download.file("https://www.spc.noaa.gov/gis/svrgis/zipped/1950-2017-torn-initpoint.zip",
+              "tornado.zip", mode = "wb")
+  unzip("tornado.zip")
+}
+sfdf <- sf::st_read(dsn = "1950-2017-torn-initpoint",
+             layer = "1950-2017-torn-initpoint", 
+             stringsAsFactors = FALSE)
+sfdf <- sfdf[sfdf$yr >= 2007, ]
+stime <- proc.time()
+sldf <- as(sfdf, "Spatial")
+
+proj4string(sldf)
+```
+
+A CRS can be referenced by its EPSG code (e.g., `epsg:4121`). The EPSG is a structured dataset of CRSs originally compiled by the European Petroleum Survey Group (EPSG). Details of a particular EPSG code is obtained by
+```{r}
+CRS("+init=epsg:4326")
+```
+
+EPSG codes for commonly used CRSs include: 
+
+* Geographic
+
+- WGS84 (EPSG:4326) Commonly used by organizations that provide GIS data for the entire globe. Used by Google Earth.
+- NAD83 (EPSG:4269) Commonly used by U.S. federal agencies.
+
+* Projected
+
+- Mercator (EPSG:3857) Mercator, tiles from Google Maps, Open Street Maps, Stamen Maps
+- UTM, Zone 10 (EPSG:32610) Pacific Northwest
+
+When `readOGR()` and `st_read()` are used to load spatial data the CRS information is included as part of the spatial object.
+```{r}
+proj4string(sldf)
+attr(sfdf$geometry, "crs")$proj4string
+```
+
+To assign a known CRS to a spatial object `x` from **sp** type either:
+```{r, eval=FALSE}
+proj4string(x) <- CRS("+init=epsg:28992")
+proj4string(x) <- CRS("+proj=utm +zone=10 +datum=WGS84")
+```
+
+CAUTION: Assigning a CRS does not re-project the geometry. Also, this is only for S4 spatial data. To transform from one CRS to another use the `spTransform` function from the **rgdal** package. For example, type either:
+```{r, eval=FALSE}
+xT <- spTransform(x, CRS("+init=epsg:4238"))
+xT <- spTransform(x, proj4string(z))
+```
+
+Here `z` is a spatial data with a valid CRS.
+
+# Polygons with attributes
+
+Spatial data are often aggregated to areal units. If the units are on a regular grid then you can work with spatial grids, spatial pixels, or rasters. Otherwise you work with spatial polygons.
+
+Consider the ESRI shapefile containing police expenditure data from Mississippi. The data are on my Web site and can be downloaded and loaded as follows.
+```{r}
+download.file("http://myweb.fsu.edu/jelsner/temp/data/police.zip",
+              "police.zip", mode = "wb")
+unzip("police.zip")
+spdf <- readOGR(dsn = "police", 
+             layer = "police", 
+             p4s = "+proj=longlat +ellps=clrk66")
+slotNames(spdf)
+str(spdf, max.level = 2)
+head(spdf@data)
+```
+
+The `plot()` method plots the polygons. First using the native geographic coordinates then using projected coordinates.
+```{r}
+plot(spdf)
+spdf <- spTransform(spdf, CRS("+proj=lcc +lat_1=60 +lat_2=30 +lon_0=-90 +units=km"))
+plot(spdf)
+```
+
+Note that the `+units=km` converts the spatial units to kilometers.
+
+# Geocomputation on S4 spatial objects (L3)
+
+Geocomputation refers to math performed on geographic data. The R interface to the geometry engine-open source (GEOS) is through the **rgeos** package.
+```{r}
+library(rgeos)
+```
+
+The math should not be done on spatial objects with geographic coordinates (lat/lon). To see if the spatial object is projected type
+```{r}
+is.projected(spdf)
+```
+
+The computations can be done across all features or feature by feature (`byid = TRUE`). For example, to compute the rectangular bounding box for the given geometry type
+```{r}
+box <- gEnvelope(spdf)
+class(box)
+```
+
+The object returned is of class `SpatialPolygons`. It contains a single polygon rectangle. The `byid = FALSE` is the default. There are no attributes.
+
+Plot the box and the counties.
+```{r}
+plot(box)
+plot(spdf, add = TRUE)
+```
+
+By turning on the `byid` switch we create a spatial polygon object with 82 rectangles.
+```{r}
+boxes <- gEnvelope(spdf, byid = TRUE)
+plot(boxes)
+```
+
+As another example the `gCentroid()` function computes the geometric center of the spatial object.
+```{r}
+centers <- gCentroid(spdf, byid = TRUE)
+plot(centers)
+```
+
+The function `gArea()` returns a number or vector as the geographical area (in sq. units) of the spatial object.
+```{r}
+areas <- gArea(spdf, byid = TRUE) %>%
+   glimpse()
+```
+
+The output is a numeric vector of length 82 giving the area of each county in square kilometers.
+
+Q: What is the area of the entire state?
+
+The `gContains()` function tests whether one geometry contains or is contained within another geometry. For example, which county contains the geographic center of the state?
+```{r}
+center <- gCentroid(spdf)
+conCenter <- gContains(spdf, center, byid = TRUE)
+plot(spdf)
+plot(center, add = TRUE)
+```
+
+Suppose we want to subset the center county making it it's own `SpatialPolygonsDataFrame`. We first turn the `matrix` object `conCenter` into a vector then use the `[]` operator on `spdf`.
+```{r}
+centerCounty <- spdf[as.vector(conCenter), ]
+
+plot(spdf)
+plot(centerCounty, col = "red", add = TRUE)
+```
+
+The `gBuffer()` function expands the given geometry to include the area within the specified width with specific styling options. Here we create a buffer around the state at a distance of 100 km.
+```{r}
+largerState <- gBuffer(spdf, width = 100)
+plot(largerState)
+plot(spdf, add = TRUE)
+```
+
+The output from `gBuffer()` is a `SpatialPolyons` object.
+
+The easiest way to make a choropleth map from a *sp* object is to use the `spplot()` method. The second line re-plots the color ramp so the data breaks correspond to the color breaks.
+```{r}
+spplot(spdf, "POLICE")
+spplot(spdf, "POLICE", pretty = TRUE)
+```
+
+Improve the color ramp.
+```{r}
+suppressPackageStartupMessages(library(RColorBrewer))
+range(spdf$POLICE)
+rng <- seq(0, 12000, 2000)
+cls <- brewer.pal(6, "Greens")
+spplot(spdf, "POLICE", col.regions = cls, at = rng)
+```
+
+Use a different variable.
+```{r}
+range(spdf$UNEMP)
+rng <- seq(4, 18, 2)
+cls <- brewer.pal(7, "Blues")
+spplot(spdf, "UNEMP", col.regions = cls, at = rng,
+       colorkey = list(space = "bottom"), sub = "Unemployment (%)")
+```
+
+Add a north arrow.
+```{r}
+bbox(spdf)
+l2 <- list("SpatialPolygonsRescale", 
+          layout.north.arrow(), 
+          offset = c(-125, 4200), scale = 40)
+spplot(spdf, "UNEMP", col.regions = cls, at = rng,
+       sp.layout = list(l2),
+       colorkey = list(space = "bottom"), sub = "Unemployment (%)")
+```
+ 
+Add a scale bar.
+```{r}
+l3 <- list("SpatialPolygonsRescale", 
+          layout.scale.bar(), 
+          offset = c(-125, 3734), 
+	        scale = 50, fill = c("transparent","black"))
+l4 <- list("sp.text", c(-125, 3724), "0")
+l5 <- list("sp.text", c(-75, 3724), "50 km")
+spplot(spdf, "UNEMP", col.regions = cls, at = rng,
+  sp.layout = list(l2, l3, l4, l5), 
+  colorkey = list(space = "bottom"), sub = "Unemployment (%)")
+```
+
+### ggplot method (L3)
+
+The `ggplot()` method can be used to make a choropleth map but more work is needed.
+
+First add row names as an attribute to the `spdf`. Here the row names are character strings from "0" to "81"
+```{r}
+rownames(spdf@data)
+spdf$id <- rownames(spdf@data)
+```
+
+Next, create a data frame of the county boundaries and join them to the attribute data frame. The join is performed with the `inner_join()` function and the joining is done by the `id` variable.
+```{r}
+df <- as.data.frame(spdf)
+fort <- fortify(spdf, region = "id")
+lines <- dplyr::inner_join(fort, df, by = "id")
+```
+
+Create map.
+```{r}
+ggplot(lines,
+       aes(x = long, y = lat, group = group, 
+           fill = INC)) +
+  geom_polygon() +
+  coord_equal()
+```
+
+The longitudes and latitudes define the polygons and are specified in the `aes()` function. The `group =` argument indicates the order in which the counties are plotted (as a single continuous overlapping, self-intersecting polygon), and the `fill =` argument is the color. Here the color is based on the value of income variable (`INC`). 
+
+Note that the names given to the spatial coordinates from the `fortify()` function are longitude and latitude even though they represent projected coordinates having units of kilometers.
+
+Make the map better.
+```{r}
+ggplot(lines, 
+       aes(x = long, y = lat, group = group, 
+           fill = INC)) +
+  geom_polygon() +
+  coord_equal() +
+  geom_path(color = "gray75") + 
+  theme(panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text = element_blank()) +
+        xlab("") + ylab("") +
+  scale_fill_gradient2("Median Income [$]") 
+```
+
+# Why simple features? (L4)
+
+Simple features is a data model underlying data structures in GIS applications including QGIS and PostGIS. Using the data model ensures our work is transferable. For example importing from, and exporting to, spatial databases.
+
+But why use the **sf** package when **sp** is already tried and tested?
+
+* Fast reading and writing of data
+* Enhanced plotting performance
+* `sf` objects are treated as data frames in most operations
+* `sf` functions are combined using `%>%` operator and they work well with the **tidyverse** packages
+* `sf` function names are consistent and intuitive (all begin with `st_`)
+
+These advantages have prompted some spatial packages (including **tmap**, **mapview**. and **tidycensus**) to add support for simple feature objects. However, it will take years for most packages to transition and some will never switch. Fortunately these can still be used in a workflow based on `sf` objects, by converting them to the spatial class used in **sp**.
+
+```{r}
+library(sp)
+world.sp <- as(world, Class = "Spatial")
+```
+
+Spatial objects are converted back to simple feature object with `st_as_sf()`:
+```{r}
+library(sf)
+world.sf <- st_as_sf(world.sp, "sf")
+```
+
+We can create basic maps from `sf` objects with the base `plot()` method (`plot.sf()`) By default, the function creates a multi-panel plot (like **sp**'s `spplot()`), one sub-plot for each variable. 
+
+For example we can map country-level population with
+```{r}
+plot(world["pop"])
+```
+
+We add additional layers using the `add = TRUE` argument. To illustrate, we subset and combine countries in the `world` object creating a single object representing Asia.
+```{r}
+asia <- world[world$continent == "Asia", ]
+asia <- st_union(asia)
+```
+
+We can now plot the Asian continent over a map of the world. Note that this only works if the initial plot has just a single layer.
+```{r}
+plot(world["pop"])
+plot(asia, add = TRUE, col = "red")
+```
+
+This is useful for checking the correspondence between two or more layers. The `plot()` method is fast and requires few lines of code, but does not create interactive maps. For more advanced map making we use visualization packages like **tmap**, **ggplot2**, **mapview**, or **leaflet**.
+
+As another example of overlays, we first determine the geographic centroid for each country, and then subset those in Asia. Then, the `summary()` method determines the number of centroids (countries) in Asia.
+```{r}
+world.centroids <- st_centroid(world)
+sel.asia <- st_intersects(world.centroids, 
+                          asia, sparse = FALSE)
+summary(sel.asia)
+```
+
+The function `st_intersects()` uses functions in the **rgeos** package for the spatial overlay operation. More on these in a moment.
+
+Since `plot()` builds on base plotting methods, we can use the many optional arguments (see `?plot` and `?par`). This provides a powerful (but not necessarily intuitive) interface. 
+
+To make the area of circles proportional to population, for example, the `cex =` argument can be used as follows:
+```{r}
+plot(world["continent"])
+plot(world.centroids["continent"], add = TRUE,
+     cex = sqrt(world$pop) / 10000, col = "red", 
+     pch = 16)
+```
+
+# Rasters (L5)
+
+A raster is a spatial data structure that divides a region (geographic) into rectangles called 'cells' (or 'pixels'). Each cell contains attribute values. Raster structures contrast with vector structures that are used to represent points, lines, and polygons. 
+
+Some of these notes are cribbed from [Introduction to the **raster** package](https://cran.r-project.org/web/packages/raster/vignettes/Raster.pdf).
+
+The **raster** package has functions for creating, reading, manipulating, and writing raster data as S4 objects.
+```{r}
+library(raster)
+```
+
+The package has functions for raster manipulation common in GIS. The functions operate in a way similar to those in Idrisi, the raster functions of GRASS, and the 'grid' module of ArcInfo.
+
+A `RasterLayer` object is single layer of data (one variable). The object includes the number of columns and rows, the coordinates of its spatial extent (bounding box), and the coordinate reference system (CRS). 
+
+A `RasterLayer` can also store information about the file in which the raster cell values are stored. A `RasterLayer` can hold the cell values in memory.
+
+The package has two classes for multi-layer data the `RasterStack` and the `RasterBrick`. A `RasterBrick` can only be linked to a single (multi-layer) file. A `RasterStack` can be formed from separate files and/or from a few layers ('bands') from a single file.
+
+# Manipulating rasters
+
+The **raster** package can use raster files in several formats, including some 'native' supported formats and others through the **rgdal** package. Supported formats for reading rasters include `GeoTIFF`, `ESRI`, `ENVI`, and `ERDAS`. Most formats supported for reading can also be written to. 
+
+Here is an example using the `Meuse` dataset (taken from the **sp** package), using a file in the native 'raster- file' format:
+```{r}
+f <- system.file("external/test.grd", 
+                 package = "raster")
+r <- raster(f)
+filename(r)
+```
+
+Do the cells contain values? Is the raster stored in memory? Create a plot.
+```{r}
+hasValues(r)
+inMemory(r)
+plot(r, main = "Raster layer from file")
+```
+
+Multi-layer objects are created in memory (from `RasterLayer` objects) or from files. Create three identical `RasterLayer` objects and assign random cell values to the layers.
+```{r}
+r1 <- r2 <- r3 <- raster(nrow = 10, ncol = 10)
+values(r1) <- runif(ncell(r1))
+values(r2) <- runif(ncell(r2))
+values(r3) <- runif(ncell(r3))
+```
+
+Combine the three `RasterLayer` objects into a `RasterStack`.
+```{r}
+s <- stack(r1, r2, r3)
+s
+nlayers(s)
+plot(s)
+```
+
+Combine three `RasterLayer` objects into a `RasterBrick` in two ways.
+```{r}
+b1 <- brick(r1, r2, r3)
+b2 <- brick(s)
+plot(b1)
+```
+
+Create a `RasterBrick` from a file.
+```{r}
+f <- system.file("external/rlogo.grd", 
+                 package = "raster")
+f
+b <- brick(f)
+b
+plot(b)
+```
+
+Extract a single `RasterLayer` in two ways.
+```{r}
+r <- raster(b, layer = 2)
+r <- raster(f, band = 2)
+plot(r)
+```
+
+# Raster algebra
+
+Most generic functions (`+`, `*`, `round()`, `ceiling()`, `log()`, etc) work on raster objects. Here are some examples:
+```{r}
+r <- raster(ncol = 10, nrow = 10)
+values(r) <- 1:ncell(r)
+s <- r + 10
+s <- sqrt(s)
+plot(s)
+r[] <- runif(ncell(r))
+r <- round(r)
+r <- r + 1
+plot(r)
+```
+
+Replace values with the subset function `[]`.
+```{r}
+r <- raster(xmn = -90, xmx = 90, ymn = -30, ymx = 30)
+s[r] <- 0
+plot(s)
+s[s == 5] <- 10
+plot(s)
+```
+
+Raster objects with the same resolution and origin can be combined.
+
+Summary functions (`min`, `max`, `mean`, etc) always return a `RasterLayer` object.
+```{r}
+r <- raster(ncol = 5, nrow = 5)
+r <- setValues(r, 1)
+s <- stack(r, r + 1)
+a <- mean(r, s, 10)
+b <- sum(r, s)
+```
+
+For single number summaries across all values in the raster use the `cellStats()` function.
+```{r}
+cellStats(s, 'sum')
+cellStats(b, 'sum')
+```
+
+# Geocomputation functions
+
+The `crop()` function takes a geographic subset of a larger raster object. A raster is cropped by providing an extent object or other spatial object from which an extent can be extracted (objects from classes deriving from raster and from spatial in the **sp** package). 
+
+The function `drawExtent()` can be used to visually determine the new extent (bounding box) that is given to the `crop()` function.
+
+The `trim()` function crops a raster layer by removing the outer rows and columns that only contain `NA` values. The `extend()` function adds new rows and/or columns with `NA` values.
+
+The `merge()` function combines two or more objects into a single object. The input objects must have the same resolution and origin (such that their cells fit into a single larger raster). If this is not the case, first adjust one of the objects with the functions `aggregate()` or `resample()`.
+
+The `aggregate()` and `disaggregate()` functions change the resolution (cell size) of a raster object.
+```{r}
+r <- raster()
+r[] <- 1:ncell(r)
+ra <- aggregate(r, 10)
+```
+
+Here we crop the raster in two pieces then merge them into one. The resulting raster is saved to `test.grd`.
+```{r}
+r1 <- crop(r, extent(-180, 0, 0, 30)) 
+r2 <- crop(r, extent(-10, 180, -20, 10))
+m <- merge(r1, r2, filename = 'test.grd', overwrite = TRUE)
+plot(m)
+```
+
+Other formats for saving the raster (e.g., `geoTIFF`) are available (see `writeRaster()` for more options). 
+
+The `flip()` function flips the data (reverse order) in the horizontal or vertical direction---typically to correct for a 'communication problem' between different R packages or a misinterpreted file. The `rotate()` function rotates longitude/latitude rasters that have longitudes from 0 to 360 degrees (often used by climatologists) to the standard -180 to 180 degrees system. With the `t()` function you can rotate a raster object 90 degrees.
+
+# Example: Convert tornado tracks to a raster layer
+
+```{r}
+if (!file.exists("torn")) { 
+  download.file("https://www.spc.noaa.gov/gis/svrgis/zipped/1950-2017-torn-initpoint.zip",
+              "tornado.zip", mode = "wb")
+  unzip("tornado.zip")
+}
+sfdf <- st_read(dsn = "1950-2017-torn-initpoint",
+             layer = "1950-2017-torn-initpoint") %>%
+  dplyr::filter(st != "HI" & st != "AK" & st != "PR") %>%
+  dplyr::filter(yr >= 2007)
+```
+
+Change the native CRS to lat/lon.
+```{r}
+library(sf)
+sfdf <- st_transform(sfdf, crs = 4326)
+st_crs(sfdf)
+```
+
+Create a raster of grid cells across the bounding box.
+```{r}
+library(raster)
+st_bbox(sfdf)
+r <- raster(xmn = -125, xmx = -67, ymn = 24, ymx = 50)
+res(r) <- 1
+```
+
+Use the `rasterize()` function to transfer values assocated with the tornado tracks to the raster cells. Here we use the `fun = "count"` argument to determine the frequency of tracks that intersect the cell. This can a 30 seconds or more.
+```{r}
+Tr <- rasterize(sfdf, r, fun = "count")
+values(Tr)[1:200]
+```
+
+To do a quick check, we use the `plot()` method.
+```{r}
+plot(Tr)
+```
+
+It looks right. Some cells across the Plains an South have quite a few tornadoes others not as many. A spatial statistic indicating how similar values in neighboring cells tend to be is Moran's I. 
+
+# Convert a raster to a spatial vector object (L5)
+
+Convert `raster` to polygons. 
+```{r}
+spdf <- rasterToPolygons(Tr)
+spplot(spdf)
+```
+
+Convert the `SpatialPolygonsDataFrame` to a simple features data frame.
+```{r}
+sfdf <- st_as_sf(spdf)
+plot(sfdf)
+```
+
+# Maps with **tmap** (L6)
+
+Some of the notes below are from https://cran.r-project.org/web/packages/tmap/vignettes/tmap-nutshell.html
+
+The **tmap** package works with `sf`, `sp`, and `raster` objects. As an example, lets start with an `sp` object from the **tmap** package. 
+
+The `qtm()` function is for quick thematic maps following the ideas of `qplot()` from **ggplot2**. The first, and only required argument is a spatial object.
+
+By default the polygons are filled with light grey, and the polygon borders are drawn in dark grey.
+
+Unlike the **ggplot2** syntax: (1) functions in **tmap** expect data as spatial objects rather than data frames, and (2) variable names need to be surrounded by quotes!
+
+We can add arguments to the `qtm()` functions to build a thematic map with various characterstics but the use of _elements_ as layers (like `geom_`s) makes constructing a map easier. 
+
+All elements start with `tm_`. The _first_ element to start with is `tm_shape()`, which specifies the shape object. Next a combination of the following drawing layers should be specified:
+
+Base layers
+
+* `tm_polygons()`: Draws polygons; 	col
+* `tm_symbols()`: Draws symbols;	size, col, shape
+* `tm_lines()`:	Draws polylines;	col, lwd
+* `tm_raster()`:	Draws a raster;	col
+* `tm_text()`:	Add text labels;	text, size, col
+
+Derived layers
+
+* `tm_fill()`:	Fills the polygons;	see `tm_polygons()`
+* `tm_borders()`:	Draws polygon borders;	none
+* `tm_bubbles()`:	Draws bubbles;	see `tm_symbols()`
+* `tm_squares()`:	Draws squares;	see `tm_symbols()`
+* `tm_dots()`:	Draws dots;	see `tm_symbols()`
+* `tm_markers()`:	Draws markers;	see `tm_symbols()` and `tm_text()`
+* `tm_iso()`	Draws iso/contour lines;	see `tm_lines()` and `tm_text()`
+
+Each aesthetic can take a constant value or a data variable name. For instance, `tm_fill(col = "blue")` colors all polygons blue, while `tm_fill(col = "var1")`, where `"var1"` is the name of a data variable in the shape object, creates a choropleth. If a vector of constant values or variable names are provided, small multiples are created.
+
+The following layers are map attributes:
+
+* `tm_grid()`:	Add coordinate grid lines
+* `tm_credits()`:	Add credits text label
+* `tm_compass()`:	Add map compass
+* `tm_scale_bar()`:	Add scale bar
+
+
+
+A text layer giving the country name (abbreviated) and scaled by the country area (`size = "AREA"`) starting at size of 5 points (`root = 5`).
+
+The layout format and style are given as additional layers.
+
+We refer to `tm_shape()` and its subsequent drawing layers as a _group_. 
+
+Multiple groups can be stacked. To illustrate this, let's create a topographic map of Europe. We start by getting data from the **tmap** package. To see what data is available in a package type
+```{r}
+data(package = "tmap")
+```
+
+Here we get the `land`, `rivers`, and `metro` spatial datasets.
+```{r}
+data(land, rivers, metro)
+
+tm_shape(land) + 
+    tm_raster("trees", breaks = seq(0, 100, by = 20), legend.show = FALSE) +
+#tm_shape(Europe, is.master = TRUE) +
+#    tm_borders() +
+tm_shape(rivers) +
+    tm_lines(lwd = "strokelwd", scale = 5, legend.lwd.show = FALSE) +
+tm_shape(metro) +
+    tm_bubbles("pop2010", "red", border.col = "black", border.lwd = 1, 
+        size.lim = c(0, 11e6), sizes.legend = c(1e6, 2e6, 4e6, 6e6, 10e6), 
+        title.size = "Metropolitan Population") +
+    tm_text("name", size = "pop2010", scale = 1, root = 4, size.lowerbound = .6, 
+        bg.color = "white", bg.alpha = .75, 
+        auto.placement = 1, legend.size.show = FALSE) + 
+tm_format_Europe() +
+tm_style_natural()
+```
+
+Things to learn from this code:
+
+* The map has 4 groups of layers, respectively from the shape objects land, Europe, rivers, and metro. 
+* The order of (groups of) layers corresponds to the plotting order.
+* The shape objects can have _different_ projections, and can also cover different areas (bounding boxes). 
+* Both the projection and the covered area are by default taken from shape object defined in the first `tm_shape()`, but in this case in the second `tm_shape()` since `is.master = TRUE`. 
+* Notice that the other shapes, i.e. land, rivers, and metro also contains outside Europe: see for instance `qtm(rivers)`.
+* The element `tm_layout()` controls all layout options such as fonts, legends, margins, and colors. 
+* The element `tm_format_Europe() is a wrapper function with some other defaults that are tailored for Europe: for instance, the legend is placed top right. 
+* The element `tm_layout_natural()` is another wrapper function of `tm_layout()` used to specify map-independent layout layout settings, such as default colors. See also `layout()`.
+
+# Geographic coordinate systems
+
+A Coordinate Reference System (CRS) defines how the spatial elements of the data relate to the surface of the Earth. CRSs are either geographic or projected.
+
+Geographic coordinate systems identify any location on the Earth's surface using longitude and latitude. Longitude is location in the east-west direction in angular distance from the Prime Meridian. Latitude is angular distance north or south of the equator. Distance in geographic CRSs are not measured in meters.
+
+The surface of the Earth in geographic coordinate systems is represented by a spherical or ellipsoidal surface. Spherical models assume that the Earth is a perfect sphere of a given radius. Spherical models have the advantage of simplicity but are rarely used because they are inaccurate. Ellipsoidal models are defined by two parameters: the equatorial radius and the polar radius.
+
+Ellipsoids are part of a wider component of CRSs: the datum. This contains information on what ellipsoid to use (with the `ellps` parameter in the proj4 CRS library) and the precise relationship between the cartesian coordinates and location on the Earth's service. These additional details are stored in the `towgs84` argument of proj4 notation (see proj4.org/parameters.html for details). These allow local variations in Earth's surface, e.g. due to large mountain ranges, to be accounted for in a local CRS. 
+
+There are local and geocentric datums. In a local datum such as NAD83 the ellipsoidal surface is shifted to align with the surface at a particular location. In a geocentric datum such as WGS84 the center is the Earth’s center of gravity and the accuracy of projections is not optimized for a specific location. Available datum definitions are seen by typing
+```{r}
+library(sf)
+st_proj_info(type = "datum")
+```
+
+### Projected coordinate systems
+
+Projected CRSs are based on Cartesian coordinates on a flat surface. They have an origin, x and y axes, and a unit of distance (meter). All projected CRSs are based on a geographic CRS, described in the previous section, and rely on map projections to convert the three-dimensional surface of the Earth into Easting and Northing (x and y) values in a projected CRS.
+
+This transition cannot be done without adding some distortion. Therefore, some properties of the Earth’s surface are distorted in this process, such as area, direction, distance, and shape. A projected coordinate system can preserve only one or two of those properties. Projections are often named based on a property they preserve: equal-area preserves area, azimuthal preserve direction, equidistant preserve distance, and conformal preserve local shape.
+
+There are three main groups of projection types - conic, cylindrical, and planar. In a conic projection, the Earth's surface is projected onto a cone along a single line of tangency or two lines of tangency. Distortions are minimized along the tangency lines and increase with the distance from those lines in this projection. Therefore, it is the best suited for maps of mid-latitude areas. A cylindrical projection maps the surface onto a cylinder. This projection could also be created by touching the Earth’s surface along a single line of tangency or two lines of tangency. Cylindrical projections are used most often when mapping the entire world. A planar projection projects data onto a flat surface touching the globe at a point or along a line of tangency. It is typically used in mapping polar regions. A list of projection types is available by typing
+```{r}
+st_proj_info(type = "proj")
+```
+
+### CRSs in R
+
+We describe a CRS in R with an epsg code or with a proj4string definition. An epsg code is shorter, and therefore easier to remember. The code also refers to only one, well-defined coordinate reference system. On the other hand, a proj4string definition allows more flexibility. This way you can specify many different projections, and modify existing ones. This also makes the proj4string approach more complicated. The epsg code points to one and only one CRS.
+
+Spatial packages support a wide range of CRSs and they use the long-established proj4 library. Other than searching for EPSG codes online, another quick way to find out about available CRSs is via the rgdal::make_EPSG() function, which outputs a data frame of available projections. Before going into more detail, it's worth learning how to view and filter them inside R, as this could save time on the internet. The following code will show available CRSs interactively, allowing you to filter ones of interest (try filtering for the OSGB CRSs for example):
+```{r}
+crs.data <- rgdal::make_EPSG()
+View(crs.data)
+```
+
+
+# Definitions
+
+We start with some definitions. 
+* Event: An occurrence of interest (e.g., tornado). 
+* Event location: Location of event (e.g., genesis latitude/longitude). Not "touchdown".
+* Point: Any location in the study area where an event could occur. Note: Event location is a particular point where an event did occur.
+* Spatial point pattern data set: A collection of observed event locations and a spatial domain of interest.
+* Spatial domain: May be defined by data availability (e.g., state or county boundary), but in many problems you need to define the boundary.
+
+Complete spatial randomness (CSR; not to be confused with CRS) defines the situation where an event has an equal chance of occurring at any point in the domain and regardless of the locations of other events. 
+
+CSR defines the situation where events have a uniform probability distribution and where events are independent of one another. Uniform probability distribution does not mean dispersed in an ordered pattern (e.g., crops planted in a field).
+
+Consider a set of events distributed uniformly within the unit plane.
+```{r}
+x <- runif(n = 30, min = 0, max = 1)
+y <- runif(n = 30, min = 0, max = 1)
+df1 <- data.frame(x, y, name = "Point Pattern 1")
+library(ggplot2)
+ggplot(df1, aes(x, y)) +
+  geom_point()
+```
+
+This is called a point pattern. The pattern is described as CSR. There are groups of events and some gaps. Repeat to create a set of four point patterns. Concatenate them into a single data frame with the `rbind()` function and plot a four-panel figure using the `facet_wrap()` function.
+```{r}
+df2 <- data.frame(x = runif(n = 30, min = 0, max = 1),
+                 y = runif(n = 30, min = 0, max = 1),
+                 name = "Point Pattern 2")
+df3 <- data.frame(x = runif(n = 30, min = 0, max = 1),
+                 y = runif(n = 30, min = 0, max = 1),
+                 name = "Point Pattern 3")
+df4 <- data.frame(x = runif(n = 30, min = 0, max = 1),
+                 y = runif(n = 30, min = 0, max = 1),
+                 name = "Point Pattern 4")
+df <- rbind(df1, df2, df3, df4)
+ggplot(df, aes(x, y)) +
+  geom_point() +
+  facet_wrap(~ name)
+```
+
+The groups of nearby events illustrate that a certain degree of clustering occurs by chance (without cause) making any visual assessment of clustering suspect. 
+
+Complete spatial randomness (CSR) lies between processes that are clustered and processes that are regular. Regularity <- CSR -> Clustered
+
+For comparison, next we generate point patterns more regular than CSR and point patterns more clustered than CSR. Events are generated using the `rMaternI()` and rMaternClust()` functions from the **spatstat** package.
+```{r}
+
+library(spatstat)
+m1 <- spatstat::rMaternI(kappa = 100, r = .02)
+df1 <- data.frame(x = m1$x, y = m1$y, name = "Inhibition Pattern 1")
+m2 <- spatstat::rMaternI(kappa = 100, r = .02)
+df2 <- data.frame(x = m2$x, y = m2$y, name = "Inhibition Pattern 2")
+m3 <- spatstat::rMatClust(kappa = 30, r = .15, mu = 4)
+df3 <- data.frame(x = m3$x, y = m3$y, name = "Cluster Pattern 1")
+m4 <- spatstat::rMatClust(kappa = 30, r = .15, mu = 4)
+df4 <- data.frame(x = m4$x, y = m4$y, name = "Cluster Pattern 2")
+df <- rbind(df1, df2, df3, df4)
+ggplot(df, aes(x, y)) +
+  geom_point() +
+  facet_wrap(~ name)
+```
+
+The difference in the arrangement of event locations between an inhibition and a cluster process is quite clear. But the difference between CSR and either of them is usually not.
+
+And spatial scale matters. A set of events can be regular on a small scale but clustered on a larger scale.
+
+Probability models of spatial patterns are used to motivate methods for detecting event clustering. A probability model is used to generate a stochastic process.
+
+For example, we can think of crime as a stochastic process defined by location and influenced by environmental factors. The probability of a crime occurring at a particular location is the random variable and we can estimate the probability of a crime event at any location given factors that influence crime. 
+
+A spatial point process is a stochastic process where event location is the random variable. A realization of the process is a collection of events generated under the probability model. The theory of spatial point processes is available in Ripley (1981), Diggle (1983), and Cressie (1993).
+
+### Stationarity and isotropy
+
+A process is stationary if the statistical properties of the events are invariant to translation across the spatial domain. This means that the relationship between two events depends only on the relative event locations (not on where the events occur in the domain). Relative location (lag) refers to distance and orientation. 
+
+In the case where the statistical properties do not depend on orientation of event pairs the process is said to be isotropic.
+
+Stationarity and isotropy allow for replication within a data set. Event pairs in a stationary process that are separated by the same distance should have the same relatedness. The assumptions of stationarity and isotropy are starting points for modeling point pattern data. 
+
+### Spatial Poisson process
+
+The Poisson distribution defines a simple model for complete spatial randomness (CSR). A point process is said to be homogeneous Poisson under the following two criteria: 
+
+1. The number of events, N, occurring within a finite spatial domain A is a random variable described by a Poisson distribution with mean $\lambda$|A| for some positive constant $\lambda$, with |A| denoting the area of A, and 
+2. The locations of the N events represent an independent random sample of locations, where each point in A is equally likely to be chosen as an event.
+
+Poisson refers to a probability model describing the number of events. It is about the _intensity_ of the process. Given a spatial point pattern data set, an estimate for the mean (rate) parameter of the Poisson distribution is given by the number of events divided by the area. 
+
+The second criteria is about homogeneity. The events are scattered about the domain without clustering or without regularity.
+
+The procedure to create a Poisson point process follows from the definition. Step 1: Generate the total number of events from a Poisson distribution with a mean that is proportional to the area. Step 2: Place each event within the domain using a uniform distribution on the spatial coordinates.
+
+For example, let area |A| = 1, and the rate of occurrence $\lambda$ = 20, then
+```{r}
+lambda <- 20
+N <- rpois(1, lambda)
+x <- runif(N)
+y <- runif(N)
+df <- data.frame(x, y)
+ggplot(df, aes(x, y)) +
+  geom_point(size = 1) 
+```
+
+The set of events represents output from a Poisson point process. The intensity of the events is specified first then locations are placed uniformly inside the domain. The domain need not be regular. The actual number of events varies from one realization to the next.
+
+By construction this point pattern is CSR. However, we are typically in the opposite position. That is, we observe a set of events and we want to know if the events are regular or clustered. Our null hypothesis is CSR and we need a test statistic that will guide our inference. The null models are easy to construct so we use Monte Carlo methods. More on this later.
+
+### Heterogeneous Poisson process
+
+In some cases the homogeneous Poisson model as the null hypothesis is too restrictive. With health events (disease locations) CSR may not be an appropriate model because the population at risk is not uniform. 
+
+In this case we consider the constant risk hypothesis as a model of "no clustering."  Each person has the same risk of disease regardless of location, and we expect more cases in areas with more people at risk. Clusters of cases in high population areas violate the CSR but not necessarily the constant risk hypothesis. The constant risk hypothesis requires the intensity of the spatial process be defined as a spatially varying function. That is, we define the intensity as $\lambda$(s), where s denotes spatial location.
+
+The intensity (density) function is a first-order property of the random process. If intensity varies across the domain the process is said to be heterogeneous. The intensity function describes the expected number of events at any location of the region. Events might be independent of one another, but groups of events appear because of the varying intensity.
+
+### Point pattern objects in the **spatstat** package
+
+Point pattern data are represented in **spatstat** by an object of class `ppp` (for planar point pattern). A dataset in this format contains the x, y coordinates of the points, optional 'mark' values attached to the points, and a description of the spatial region or 'window' over which the events were observed. See `?ppp.object` for details.
+
+Spatial statistics computed on the `ppp` object will be somewhat sensitive to the choice of window, so some thought should go into making this choice.
+
+The data `swedishpines` is available in the **spatstat** package.
+```{r}
+library(spatstat)
+swedishpines
+```
+
+The data is a planar point pattern (`ppp`) object with 71 events. The events are contained within a rectange window of size 9.6 by 10 meters.
+
+There is a `plot()` method for `ppp` objects. 
+```{r}
+plot(swedishpines)
+```
+
+The events are plotted as open circles within the bounded window. The plot is labeled with the name of the `ppp` object.
+
+The function `convexhull()` creates a convex hull around the events. Here we add it to our plot.
+```{r}
+plot(swedishpines)
+plot(convexhull(swedishpines), add = TRUE)
+```
+
+The hull defines the minimum area convex polygon that contains all the events. 
+
+The spatial domain (or window) for analysis and modeling should be somewhat larger than the convex hull. The function `ripras()` computes an estimate of the spatial domain. Here we add it to our plot.
+```{r}
+plot(swedishpines)
+plot(convexhull(swedishpines), add = TRUE)
+plot(ripras(swedishpines), add = TRUE, lty = "dotted")
+```
+
+The window can have arbitrary shape. A rectangle, a polygon, a collection of polygons including holes, or a binary image (mask). If the window needs to be stored as a dataset in its own right, it is an object of class `owin`.  See `?owin.object` for details.
+
+Each event in a spatial point pattern may carry additional information called a 'mark'. A mark can be continuous (e.g. tree height) or discrete (tree species). A multitype point pattern is one in which the events are marked using a factor (e.g., tree species). The mark values must be given in a vector of the same length as the coordinate vectors. This is interpreted so that `marks[i]` is the mark attached to the point (`x[i]`, `y[i]`).
+```{r}
+plot(demopat)
+marks(demopat)
+```
+
+For a multitype pattern (where the marks are factors) we use the `split` function to separate the point pattern objects by mark type. Consider the Lansing Woods dataset as a `ppp` object with marks corresponding to tree species.
+```{r}
+data(lansing)
+LW <- lansing
+plot(split(LW))
+```
+
+### Spatial varying intensity
+
+Given a set of events, how do we estimate the intensity function? Quadrat counting is a simple way. With quadrat counting the spatial domain is divided into a grid of rectangular cells and the number of events in each cell is counted.
+```{r}
+quadratcount(swedishpines)
+```
+
+By default the domain is divided into a 5 x 5 grid. The event count in each grid cell is produced.
+
+Changning the default number of cells in x and y directions.
+```{r}
+quadratcount(swedishpines, nx = 2, ny = 3)
+```
+
+Or using the plot method on the `quadratcount()` object.
+```{r}
+plot(quadratcount(swedishpines))
+plot(swedishpines, pty = 19, col = "red", 
+     add = TRUE, main = "")
+```
+
+When the number of events is large, hexagon cells can help visualize. The process is: (1) tessellate the domain by a regular grid of hexagons, (2) count the number of events in each hexagon, and (3) use a color ramp to display the events per hexagon.
+```{r}
+library(hexbin)
+x <- rnorm(20000)
+y <- rnorm(20000)
+hbin <- hexbin(x, y, xbins = 10) 
+str(hbin)
+```
+
+The `xbins =` argument is the number of cells in the x direction. The class of the object created is `hexbin` and it contains 16 slots. The **hexbin** package uses S4 data classes. There is a plot method.
+```{r}
+plot(hbin)
+```
+
+Hexagons have symmetric nearest neighbors (there is only rook contiguity). They have the most sides of any polygon that can tessellate the plane. They are generally more efficient than rectangles at covering the events. It takes fewer of them to cover the same number of events. They are visually less biased for displaying densities compared with squares/rectangles.
+
+As another example, generate a large number of random events in the two-dimensional plane. Use a normal distribution in the x-direction and a student t-distribution in the y-direction.
+```{r}
+set.seed(131)
+x <- rnorm(7777)
+y <- rt(7777, df = 3)
+hbin2 <- hexbin(x, y, xbins = 25)
+plot(hbin2)
+```
+
+The `ggplot()` methods have a `stat_binhex()` layer that can be used for display.
+```{r}
+library(ggplot2)
+df <- data.frame(x, y)
+ggplot(df, aes(x, y)) +
+  stat_binhex()
+```
+
+#### Kernel density
+
+Another way to quantify the spatial intensity of the process is with kernel density. A kernel density estimator is a smoothing function that gives the average number of events at any point in the domain.  
+
+Here we generate 100 events uniformly on the real number line between 0 and 1. The kernel density estimator is applied using different bandwidths.
+```{r}
+e <- runif(100)
+dd1 <- density(e, bw = .025)
+dd2 <- density(e, bw = .05)
+dd3 <- density(e, bw = .1)
+df <- data.frame(x = c(dd1$x, dd2$x, dd3$x), 
+                 y = c(dd1$y, dd2$y, dd3$y),
+                bw = c(rep("Bandwidth = .025", 512), rep("Bandwidth = .05", 512),
+                       rep("Bandwidth = .1", 512)))
+df2 <- data.frame(x = e, y = 0)
+ggplot(df, aes(x, y)) +
+  geom_line() +
+  facet_wrap(~ bw, nrow = 3) +
+  geom_point(aes(x, y), data = df2, color = "red")
+```
+
+As the bandwidth increases the curve indicated by the line becomes smoother. The density is estimated at every location on the number line, not just at the location of the event. 
+
+The density is the sum of the kernels centered on top of each event location. Events are marked with a point along the x-axis.  The kernel is a Gaussian (normal) density.  It is placed on each event and the bandwidth specifies the distance between the inflection points of the kernel. The one-dimensional density estimate extends to two (or more) dimensions.
+
+# Tornado outbreaks (L9)
+
+```{r}
+load(file = "GetOutbreaks.RData")
+```
+
+Filter on your outbreak using `YearOutbreak`. For example:
+```{r}
+sfdf <- TornL.sfdf %>%
+  filter(YearOutbreak == "2008-132") 
+```
+
+Convert the simple feature to S4 class of `SpatialLinesDataFrame`.
+```{r}
+library(rgeos)
+sldf <- as(sfdf, "Spatial")
+```
+
+Convert the `sldf` object to a `psp` object from the **spatstat** package. We need the **maptools** package as well. The function `as.psp()` creates the `psp` object and we use the `EF` variable as the marks.
+```{r}
+library(maptools)
+T.psp <- as.psp(sldf["EF"])
+T.ppp <- endpoints.psp(T.psp, which = "first")
+```
+
+Rescale the units from meters to kilometers. Create a window using the `ripras()` (Ripley-Rasson estimate). Subset the `ppp` object by the window. Use the `plot()` method to show results.
+```{r}
+T.ppp <- rescale(T.ppp, s = 1000, unitname = "km")
+W <- ripras(T.ppp)
+T.ppp <- T.ppp[W]
+plot(T.ppp)
+```
+
+**Challenge** For your assigned outbreak (1) determine the average tornado intensity per square km. (2) Plot the spatial varying intensity of tornadoes using (a) quadrats and (b) the kernel density method.
+```{r}
+summary(T.ppp)
+```
+```{r}
+plot(quadratcount(T.ppp))
+plot(T.ppp, pty = 19, col = "red", 
+     add = TRUE, main = "")
+```
+
+```{r}
+x <- density(T.ppp)
+plot(x)
+```
+
+# Lesson 11
+
+Clustering is a second-order property of point pattern data. It answers the question: is the probability of an event in the proximity of another event higher than expected by chance? 
+
+Let $r$ be the distance between event pairs or the distance between events and an arbitrary point within the domain of a spatial point pattern data set, then the functions to describe clustering and regularity are:
+
+* The reduced second moment function (Ripley's K) $K(r)$ 
+          #r is distance relative to some other point or event (units of length but really a leg distance)
+* The empty space function $F(r)$
+* The nearest neighbor distance function $G(r)$
+* The pairwise correlation function $g(r)$
+
+Ripley's K is defined so that $\lambda \times K(r)$ is the expected number of additional events within a distance $r$ of an event, where $\lambda$ is the average intensity of the events. $K(r)$ is a measure of spatial autocorrelation in point pattern data.
+
+The empty space function is the cumulative distribution of the distance from a fixed location (point) in the window to the nearest event accumulated over all events (called the point-to-event function). 
+
+The nearest neighbor function is the cumulative distribution of the distance from an event to the nearest other event accumulated over all events (called the event-to-event function). 
+
+$F(r)$ summarizes the sizes of the gaps between events (lacunarity---amount of gappiness) and $G(r)$ summarizes the distances between events.
+
+Estimates of K, F, and G computed on point pattern data are compared to corresponding values assuming a homogeneous Poisson process and are well defined only for stationary point patterns (statistically the same under translations). A deviation of the empirical curve from the theoretical curve is evidence against CSR. The functions under a homogeneous Poisson process are:
+
+* $K(r) = \pi r^2$     <- area of a circle
+* $F(r) = 1 - \exp(-\lambda \pi r^2)$
+* $G(r) = 1 - \exp(-\lambda \pi r^2)$
+* $J(r) = F(r)/G(r) = 1$
+
+Where $\lambda$ is the intensity of events.
+
+Consider again the Swedish pine saplings data. 
+```{r}
+library(spatstat)
+library(maptools)
+data(swedishpines)
+class(swedishpines)
+```
+
+Assign the data to an object called `SP`. Then compute the nearest neighbor distance function using the `Gest()` function and assign it to an object called `G`.
+```{r}
+SP <- swedishpines
+G <- Gest(SP)
+G
+```
+
+Output includes the lagged distance `r` and various estimates for the cumulative event-to-event distances. It also shows the theoretical function under the assumption of homogeneous Poisson. The `plot` method makes it easy to compare the estimates and to make comparisons with the function assuming a CSR point pattern.
+```{r}
+plot(G)
+abline(h = c(.2, .5), 
+       col = "black",
+       lty = 2)
+```
+
+The plot shows the value of G as a function of lagged distance $r$ out to the recommended range. 
+
+We interpret the plot as follows: 20% (G = .2) of the saplings have a nearest neighbor within a .5 meter distance ($r$) [black dashed lines] and 50% of them have a nearest neighbor within .8 meters.
+
+The blue dashed-dotted line is the theoretical model under the hypothesis of homogeneous Poisson process having the same intensity as the set of Swedish pines. 
+
+Here we see that for a given radius, the observed value of G is *less than* the theoretical value of G. There are fewer saplings in the vicinity of other saplings than expected by chance. For example if the saplings were CRS we would expect 20% of them would be within a distance of .3 meter and 50% would be within .55 meter.
+
+The empty space function (F) is similar but somewhat less intuitive.
+```{r}
+plot(Fest(SP))
+abline(h = .7, 
+       col = "black",
+       lty = 2)
+abline(v = 6.1,
+       col = "black",
+       lty = 2)
+```
+% of the domain itself is less than .6 
+departure indicates regualarity 
+
+The interpretation is that 70% (F = .7) of the spatial domain is less than about .6 meter ($r$) from a sapling. If the process was CSR less than 60% of the domain would be less than .6 meter from a sapling. In words, the saplings display less "gappiness" (more regularity) than expected by chance.
+
+The J function is the ratio of the G and F functions. For a CSR processes the value of J should be close to one. Here we see a large and systematic departure for distances greater than about .1 or .2 meters due to the regularity.
+```{r}
+plot(Jest(SP))
+```
+ratio of f to g so its a constant...thats why jpois is flat
+
+# Multitype clustering
+
+Analogues of the G and K functions are available for 'multitype' point patterns. Multitype patterns have a mark as a factor. Interest focuses on whether one type of event influences another type (cross correlation). The most common is the K cross function $K_{ij}(r)$, which is an estimates the expected number of events of type j within a distance r of type i.
+
+The `lansing` ppp contains the locations of 2,251 trees in a wooded lot.
+```{r}
+data(lansing)
+summary(lansing)
+```
+
+It is a multitype planar point pattern with marks indicating the tree species. There are 135 black oaks, 703 hickories, etc.
+
+Compute and plot the cross K function for Maple and Hickory trees.
+```{r}
+plot(Kcross(lansing, i = "maple", j = "hickory"))
+abline(v = .2)
+abline(h = .093)
+abline(h = .125, lty = 2, col = "blue")
+```
+
+The vertical axis is the number of hickory trees within a radius r of a maple tree divided by the average intensity of the hickories. So at a distance of .2 (20% of 924 ft ~ 180 ft) from a random maple there is an average of roughly 65 hickories (.093 of 703). If hickory and maple trees were independently distributed we would expect about 88 maples (.125 * 703) within that distance.
+
+Thus the presence of a hickory tree tends to reduce the probability of a neighboring maple tree.
+
+
+# Point Pattern Models {#PointProcessModels} (L12)
+
+```{r}
+library(RXKCD)
+getXKCD()
+```
+
+Last time: Distance functions, interpretation, inferences related to event clustering.
+
+### Deconstructing Ripley's K
+
+Ripley's $K$ and function (Ripley, 1976) is a descriptive statistic used to detect deviations from spatial homogeneity (CSR). A sample estimate of the $K$ function is defined as
+$$
+\hat{K}(r) = \lambda^{-1}\sum_{i\ne j} I(d_{ij}<r)/n,
+$$
+
+where $d_{ij}$ is the Euclidean distance between the $i$ and $j$ events, $r$ is the search radius, λ is the average density of events ($n/A$), where $A$ is the area of the region containing all events and $I$ is the indicator function (1 if its operand is true, 0 otherwise). If the events are homogeneous, $\hat{K}(r)$ increases at a rate equal to $\pi r^2$.
+
+Using Ripley's K function we can determine whether events have a random, dispersed or clustered distribution pattern given a spatial scale.
+
+```{r}
+load(file = "GetOutbreaks.RData")
+
+library(dplyr)
+library(sf)
+sfdf <- TornL.sfdf %>%
+  filter(YearOutbreak == "1999-13")
+
+sldf <- as(sfdf, "Spatial")
+
+library(spatstat)
+library(maptools)
+T.psp <- as.psp(sldf["EF"])
+T.ppp <- endpoints.psp(T.psp, which = "first")
+W <- ripras(T.ppp)
+T.ppp <- T.ppp[W]
+T.ppp2 <- rescale(T.ppp, s = 1000, unitname = "km")
+```
+
+Compute Ripley's K.
+```{r}
+K <- Kest(T.ppp2)
+plot(K)
+abline(v = 100, lty = 2)
+abline(h = 48000, lty = 2)
+abline(h = 30000, lty = 2, col = "blue")
+intensity(T.ppp2)
+```
+
+Interpretation: Consider 100 km on the horizontal axis. If we draw a line up from there we can see that the line intersects the black curve at a height of about 48,000. The value of 48,000 multiplied by the average intensity of .000382 results in a value of 18.3. Thus at a distance of 100 km from every tornado we find, on average, about 18 tornadoes.
+
+The blue line is the curve under the assumption that the tornadoes are randomly distributed across the outbreak area. We can see that if this was the case we would expect to see on average only about 30,000 * .000382 = 11.5 tornadoes within a distance 100 km from any tornado. Since there are MORE tornadoes than expected within a given 100 km radius we can say there is evidence for clustering at this scale.
+
+```{r}
+str(K)
+```
+
+```{r}
+df <- data.frame(r = K$r, nT = intensity(T.ppp2) * K$iso)
+tail(df)
+df$r
+```
+
+We need a function to interpolate the value of `nT` at a distance of 100 km.
+```{r}
+approx(x = df$r, y = df$nT, xout = 100)$y
+```
+
+The variance stabilized Ripley $K$ function called the $L$ function is often used.  The sample version of the $L$ function is defined as
+
+$$
+\hat{L}(r) = \Big( \hat{K}(r)/\pi\Big)^{1/2}.
+$$
+
+For approximately homogeneous data, the $L$ function has expected value $r$ and its variance is approximately constant in $r$.  A common plot is a graph of $r - \hat{L}(r)$ against $r$, which will approximately follow the horizontal zero-axis with constant dispersion if the data follow a homogeneous Poisson process.
+
+```{r}
+L <- Lest(T.ppp2)
+plot(L)
+```
+
+# Point Pattern Models
+
+These notes are adapted from: [Baddley and Turner](http://www3.uji.es/~mateu/badturn.pdf)
+
+Expanding our earlier notation we can write that a homogeneous Poisson process with intensity $\lambda > 0$ has intensity $$\lambda(u, x) = \lambda$$ where $u$ is any location in the window W and $x$ is the set of events.
+
+Then the inhomogeneous Poisson process has conditional intensity $$\lambda(u, x) = \lambda(u)$$. The intensity $\lambda(u)$ depends on a spatial trend and or on a covariate.
+
+Finally there is a class of Markov point processes models that allow for clustering (or regularity) due to event interaction. Interaction is limited to nearest neighbors (Markov process). Said another way, a Markov point process (also known as a Gibbs process) generalizes a Poisson process in the case where events are pairwise dependent.
+
+A Markov process with parameters $\beta > 0$ and $0 < \gamma < \infty$ with interaction radius $r > 0$ has conditional intensity $\lambda(u, x)$ given by
+$$
+\lambda(u, x) = \beta \gamma^{t(u, x)}
+$$
+where $t(u, x)$ is the number of events that lie within a distance $r$ of location $u$.
+
+Three cases:
+
+1. If $\gamma = 1$, then $\lambda(u, x) = \beta$ No interaction between events,  $\beta$ can vary with u.
+2. If $\gamma < 1$, then $\lambda(u, x) < \beta$. Events inhibit nearby events.
+3. If $\gamma > 1$, then $\lambda(u, x) > \beta$. Events encourage nearby events.
+
+Note the distinction between the interaction term $\gamma$ and the trend term $\beta$. As we will see later in the semester, a similar distinction exists between autocorrelation $\rho$ and trend $\beta$ in spatial regression models.
+
+### Model fitting
+
+The **spatstat** package contains functions for fitting statistical models to point pattern data. Models can include trend, covariates, and event interactions of any order (interactions are not restricted to pairwise). Models are fit with maximum likelihood and minimum contrast procedures. 
+
+The method of minimum contrasts derives a cost function between the theoretical and empirical K functions. Parameter values are those that minimize the cost function.
+
+The `ppm` function is used to fit a spatial point pattern model. The syntax has the form `ppm(X, formula, interaction, ...)` where `X` is the point pattern object of class `ppp`, `formula` describes the systematic (trend and covariate) part of the model, and `interaction` describes the stochastic dependence between events (e.g., Strauss process).
+
+More generally, we write the logarithm of the conditional intensity $\log[\lambda(u, x)]$ as a log-linear expression with two components.  
+$$
+\log\big[\lambda(u, x)\big] = \theta_1 B(u) + \theta_2 C(u, x)
+$$
+
+ 
+where the $\theta$'s are model parameters that need to be estimated. 
+
+Maximum liklihood procedure -- given the model how often would i see the data that is actually observed.
+
+The term $B(u)$ depends only on location so it represents trend and/or covariate effects. It is the 'systematic component' of the model. The term $C(u, x)$ represents stochastic interactions (dependency) between events.
+
+Recall earlier we modeled the pine saplings using a Strauss process. And a plot of the events gave no indication of a trend. That is, no systematic variation in the intensity of saplings. A plot of the nearest neighborhood distance function indicated regularity. The regularity appeared pronounced at scales between at least 3 and 10 units of lag distance. Let's repeat.
+```{r}
+par(mfrow = c(1, 1))
+SP <- swedishpines
+plot(SP)
+plot(Kest(SP))
+```
+
+The Strauss process is the simplest interaction model. Inhibition in this case is constant with a fixed radius (r) around each event. The strength of the inhibition can range from zero to complete (zero probability of a nearby event). In the case of no inhibition the process is equivalent to a homogeneous Poisson process.
+
+To model the process we set the trend term to a constant (`~ 1`) and the Strauss interaction radius to 10 units. The `rbord =` argument specifies a distance from the window for border corrections. 
+```{r}
+modelSP <- ppm(SP, trend = ~ 1, 
+            interaction = Strauss(r = 10), 
+            rbord = 10)
+```
+
+The value for r in the `Strauss()` function is based on visual inspection of the plot of `Kest()`. A value is chosen that represents is large departures from the CSR model. 
+
+We inspect the model by typing the object name.
+```{r}
+modelSP
+```
+
+The output indicates the first-order term (beta) has a value of .076. This is the intensity of the 'proposal' events. With inhibition processes beta will exceed the average intensity (here .0074). 
+
+The interaction parameter (gamma) is .275. It is less than one indicating an underlying inhibition process. The logarithm of gamma, called the interaction coefficient, is -1.29. Interaction coefficients less than zero imply inhibition.
+
+A table with the coefficients including the standard errors and uncertainty ranges is obtained with the `coef()` method.
+```{r}
+coef(summary(modelSP))
+```
+
+Here the `(Intercept)` is the logarithm of beta `exp(-2.58)` = .076.
+
+The model is interpreted as follows. The process producing the spatial pattern of pine saplings is such that we should see .076 saplings per unit area (latent rate). But because of event inhibition, where saplings nearby other saplings fail to grow, the number of saplings is reduced to .0074 per unit area. Thus the spatial pattern is suggestive of sibling-sibling interaction. Adults have many off-springs, but only some survive due to limited resources.
+
+Let's compare this to the maple trees in the Lansing woods dataset (`lansing`). We extract the events marked as maple trees as a separate `ppp` object. A plot of the events and the local intensity articulates the first-order properties.
+```{r}
+MP <- unmark(lansing[lansing$marks == "maple"])
+summary(MP)
+```
+
+There are 514 events over this square region (924 x 924) square feet.
+
+A plot of the events and the local intensity articulates the first-order properties.
+```{r}
+plot(density(MP))
+plot(MP, add = TRUE)
+```
+
+We see there are more trees in the south.
+
+A plot of the G function summarizes the second-order properties under the assumption of no trend.
+```{r}
+plot(Gest(MP))
+abline(v = .02, col = "blue")
+```
+
+The cumulative event-to-event distances indicate clustering since the empirical curve is above the theoretical curve. For example about 75% of the maple trees are within a distance of .02 * 924 = 18.5 feet of another maple tree. If the process resulted in trees that where spatially distributed randomly then only 50% of the trees would be within 18.5 feet of another tree.
+
+Model the event interaction as a Strauss process with interaction distance of .025 units.
+```{r}
+ppm(MP, trend = ~ 1, 
+        interaction = Strauss(r = .025))
+```
+
+Here the first order term  beta is 301. This indicates the latent rate of maple trees per unit area. This is less than the 514 actual maple trees. The fitted interaction parameter gamma is 1.47. It is greater than a value of one indicating clustering. The logarithm of gamma is .387.
+
+The model is interpreted as follows. The process producing the maple trees is such that we expect to see about 301 trees per unit area. Because of clustering, where maples are more likely near other maples, the number of maples increases to 514 per unit area.
+
+Here the explanation may not be about event interaction. As the clustering in the pattern of maple tree locations can be explained to some extent by the presence of hickories (cross event interaction). 
+
+Note: The Strauss process model is for inhibition. So although we can use this for diagnostics, we need to fit a cluster model. Notice the `*** Model is not valid ***` warning.
+
+For a cluster model the spatial intensity $$\lambda(u) = \kappa \mu(u)$$ where $\kappa$ is the average number of clusters and $\mu(u)$ is the spatial varying cluster size (number events per cluster).
+
+This is done with the `kppm` function.
+```{r}
+modelMP <- kppm(MP, 
+                trend = ~ 1,
+                clusters = "Thomas")
+modelMP
+```
+
+Here $\kappa$ is 21.75 and $\bar \mu(u)$ (mean cluster size) is 23.64 so the product is the number of events. It is a parent-child process. The number of parents is about 22. The distribution of the parents can be described as CSR. Each parent produces about 24 offspring distributed randomly about the location of the parent within a characteristic distance. Of course the physical process might be quite different from the point pattern process used to describe it.
+
+The cluster scale parameter is $\sigma^2$. The cluster scale indicates the characteristic size (area units) of the cluster.
+
+A `plot()` method verifies that the cluster process statistically 'explains' the spatial correlation.
+```{r}
+plot(modelMP, what = "statistic")
+```
+
+This is seen by the fact that the model fit (black line) lies on top of the cluster process line (red).
+
+The scale of the clustering is visualized with the `what = "cluster"` argument.
+```{r}
+plot(modelMP, what = "cluster")
+```
+
+Hypothesis: Tornadoes are coming in larger bunches. Cluster scale parameter is increasing over time.
+
+#### Steps in fitting a point process model
+
+* Analyze/plot the first (intensity) and second (clustering) order characteristics of the event pattern.
+* Select a spatial point process model (trend, interaction distance, etc) for pattern, informed by the results of step 1
+* Fit the model to the event pattern
+* Assess the model's goodness-of-fit by running simulations and comparing the simulated patterns with the original pattern
+
+Pro tip: Your model should generate 'fake' data that looks like the data used to fit the model.
+
+The development of spatial point process methods has largely been theory driven (not driven by actual problems/data). More work needs to be done to apply the theory to environmental data with spatial heterogeneity, properties at the individual level (marks), and time information.
+
+ Fit a clustered inhomogeneous point process model to the tornadoes in your outbreak using cape, cin, and the interaction between them as covariates.
+
+Get the outbreak image.
+```{r}
+load(file = "GetOutbreaks.RData")
+TornO.sfdf$NARRtime
+TornO.sfdf$YearOutbreak
+```
+
+Filter on your outbreak.
+```{r}
+myOutbreak <- "2008-132"
+sfdf <- TornO.sfdf %>%
+  filter(YearOutbreak == myOutbreak)
+```
+
+Create URL as a character string.
+```{r}
+NARRtime <- sfdf$NARRtime
+Yr <- format(NARRtime, "%Y")
+mo <- format(NARRtime, "%m")
+da <- format(NARRtime, "%d")
+hr <- format(NARRtime, "%H")
+
+Yrmo <- paste0(Yr, mo)
+Yrmoda <- paste0(Yr, mo, da)
+
+slug <- paste0("https://nomads.ncdc.noaa.gov/data/narr/", Yrmo, "/", Yrmoda, "/", "narr-a_221_", Yrmoda, "_", hr, "00_000.grb")
+```
+
+Download the NARR data. Get the data as a `rasterBrick`. Save the native projection string and resolution.
+```{r}
+
+download.file(url = slug, "NARR.grb", mode = "wb")
+library(raster)
+rb <- brick('NARR.grb')
+lccR <- projection(rb)
+cape <- raster(rb, layer = 315)
+cin <- raster(rb, layer = 316)
+```
+
+Get the individual tornadoes by your outbreak. Transform the CRS to match that of the environmental raster.
+```{r}
+sfdf <- TornL.sfdf %>%
+  filter(YearOutbreak == myOutbreak) %>%
+  st_transform(crs = lccR)
+```
+
+Convert simple feature to S4 class of `SpatialLinesDataFrame`.
+```{r}
+library(rgeos)
+sldf <- as(sfdf, "Spatial")
+```
+
+Convert the `sldf` object to a `psp` object from the **spatstat** package. We need the **maptools** package as well. The function `as.psp()` creates the `psp` object and we use the `EF` variable as the marks.
+
+when you model do nnot rescale t.ppp
+```{r}
+library(spatstat)
+library(maptools)
+T.psp <- as.psp(sldf["EF"])
+T.ppp <- endpoints.psp(T.psp, which = "first")
+W <- ripras(T.ppp)
+T.ppp <- T.ppp[W]
+T.ppp2 <- rescale(T.ppp, s = 1000, unitname = "km")
+plot(T.ppp)
+```
+
+Fit a stationary cluster point process model. Use the rescaled ppp object so the statistics are more easily interpretable. Record the uniform intensity, kappa, scale, and mean cluster size.
+```{r}
+model <- kppm(T.ppp2, 
+              trend = ~ 1,
+              clusters = "Thomas")
+model
+```
+
+For a cluster model the spatial intensity $\lambda(u) = \kappa \mu(u)$ where $\kappa$ is the average number of tornadoes and $\mu(u)$ is the spatial varying family size (number tornadoes per family). The scale parameter is 10.4 km, which indicates the characteristic family size. 
+
+Here $\kappa$ is .0000504 and $\bar \mu(u)$ (mean family size) is 10.21 tornadoes. The product of $\kappa$ and $\bar \mu(u)$ is the average (uniform) intensity.  
+
+```{r}
+plot(model)
+```
+
+Generate an envelope around Ripley's K function from data generated by the model and compare it to Ripley's K computed from the actual data.
+```{r}
+E <- envelope(model, Kest, nsim = 39, 
+              global = TRUE)
+plot(E)
+```
+
+Add the CAPE & CIN as trend terms. Here we use `T.ppp` because the distance units on the `cape` and `cin` rasters are meters.
+```{r}
+capeI <- as.im(cape)
+cinI <- as.im(cin)
+model2 <- kppm(T.ppp, trend = ~ capeI + cinI + capeI:cinI,
+               clusters = "Thomas")
+summary(model2)
+```
+
+Since CIN is negative and CAPE positive, results show that the effect of CAPE on tornado occurrence increases with increasing CIN. The effect of CIN on tornado occurrence increases with increasing CAPE.
+
+```{r}
+E <- envelope(model2, Lest, nsim = 39, 
+             global = TRUE)
+plot(E, main = "Clustered Inhomogeneous Model", 
+     legend = FALSE)
+```
+
+# Lesson 15
+
+# Create a lat/lon raster of tornado counts by outbreak
+
+Get the outbreak image.
+```{r}
+library(dplyr)
+library(sf)
+load(file = "GetOutbreaks.RData")
+myOutbreak <- "2003-194"
+sfdfT <- TornL.sfdf %>%
+  filter(YearOutbreak == myOutbreak)
+```
+
+Here we first buffer the lines using the `Width` attribute. This is done with the `st_buffer()` function in the **sf** package. The `dist` argument is set to one half the path width.
+```{r}
+sfdfP <- st_buffer(sfdfT, dist = sfdf$Width/2)
+```
+
+Next we obtain the corresponding environmental data. First create URL slug as a character string.
+```{r}
+sfdfO <- TornO.sfdf %>%
+  filter(YearOutbreak == myOutbreak)
+# NARRtime <- sfdfO$NARRtime - 6 * 60 * 60
+NARRtime <- sfdfO$NARRtime
+Yr <- format(NARRtime, "%Y")
+mo <- format(NARRtime, "%m")
+da <- format(NARRtime, "%d")
+hr <- format(NARRtime, "%H")
+
+Yrmo <- paste0(Yr, mo)
+Yrmoda <- paste0(Yr, mo, da)
+
+slug <- paste0("https://nomads.ncdc.noaa.gov/data/narr/", Yrmo, "/", Yrmoda, "/", "narr-a_221_", Yrmoda, "_", hr, "00_000.grb")
+```
+
+Then download the NARR data. Get the relevant data as a `rasterBrick`. Reproject the raster to a lat/long grid.
+```{r}
+download.file(url = slug, "NARR.grb", mode = "wb")
+library(raster)
+rb <- brick('NARR.grb')
+cape <- raster(rb, layer = 315)
+cin <- raster(rb, layer = 316)
+hlcy <- raster(rb, layer = 323)
+capeLL <- projectRaster(cape, crs = "+init=epsg:4326")
+cinLL <- projectRaster(cin, crs = "+init=epsg:4326")
+hlcyLL <- projectRaster(hlcy, crs = "+init=epsg:4326")
+```
+
+Transform the CRS to match that of the environmental rasters. Create a raster scaffold to the rectangular extension of the outbreak with a resolution equal to that of the NARR data.
+```{r}
+sfdfTll <- st_transform(sfdfT, crs = "+init=epsg:4326")
+r <- raster(extent(sfdfTll), resolution = res(capeLL))
+```
+
+Rasterize the tornado tracks by counting the number of tracks in each grid cell. This is done using the `rasterize()` function with the first argument the tornado paths, and the second the raster. The argument `fun =` can be a function or a field. In this case, the character value `'count'` returns the number of tornado paths that intersect each grid cell.
+```{r}
+nT.r <- rasterize(sfdfTll, r, fun = 'count')
+```
+
+Clip/crop the raster containing the cape values to that of the raster containing the tornado counts. Repeat for the other environmental rasters.
+```{r}
+cape.r <- projectRaster(capeLL, nT.r)
+cin.r <- projectRaster(cinLL, nT.r)
+hlcy.r <- projectRaster(hlcyLL, nT.r)
+```
+
+Make a map. First get the county and state boundaries.
+```{r}
+library(tmap)
+library(USAboundaries)
+counties <- us_counties()
+states <- us_states()
+```
+
+Plot the tornado counts.
+```{r}
+tm_shape(nT.r) +
+  tm_raster(title = "Tornado Count") +
+tm_shape(counties) +
+  tm_borders(col = "grey") +
+tm_shape(states) +
+  tm_borders() +
+tm_shape(sfdfTll) +
+  tm_lines(lwd = 3)
+```
+
+There are some zero and very short length tornado tracks.
+
+To verify this, make a map using the `mapView()` function from the **mapview** package.
+```{r}
+library(mapview)
+mapView(sfdfTll, 
+        zcol = "Length")
+```
+
+## Spatial Autocorrelation
+
+Spatial autocorrelation is quantified by how similar a value in region $i$ is to the value in region $j$, weighting this similarity by how close $i$ is to $j$. The closer the regions the more the weight. High similarities with high weight (similar values close together) result in high values of spatial autocorrelation. Low similarities with high weight (dissimilar values close together) yield low values. 
+
+Change the `NA`s in the raster cells to zeros. This makes sense in this cases since we assume no tornado occurred in these cells not that we don't know whether at least one did or not.
+```{r}
+nT.r[is.na(nT.r[])] <- 0
+```
+
+We compute Moran's I as an index of spatial autocorrelation with the `Moran()` function from the **raster** package.
+```{r}
+Moran(nT.r)
+```
+
+The value of about .2 indicates only a small amount of spatial correlation. This is consistent with the clustering as revealed by Ripley's K function when considering the tornadoes as discrete events. Note the amount of spatial correlation depends on the scale. Here that scale was chosen based on the native grid resolution of the environmental data.
+
+There is no level of uncertainty on this value so we can't make inferences.
+
+Let's convert the raster to a set of polygons. We can then use the functions from the **spdep** package (as we did last semester). The conversion is done with the `rasterToPolygons()` function.
+```{r}
+spdf <- rasterToPolygons(nT.r)
+str(spdf, max.level = 2)
+names(spdf)
+```
+
+The result is a `SpatialPolgonsDataFrame` with one attribute called `layer` that contains the tornado counts.
+
+We change the name of the attribute and then add the CAPE, CIN, and helicity values as additional variables. Since the order of the polygons in the spatial data frame is preserved we can use the simple assignment operator.
+```{r}
+names(spdf) <- "nT"
+spdf$cape <- values(cape.r)
+spdf$cin <- values(cin.r)
+spdf$hlcy <- values(hlcy.r)
+head(spdf@data)
+```
+
+This tells us that the upper-left most polygon with a cape and cin of 11.6 and .29 J/kg respectively and with a helicity of 861 J/kg, did not have a tornado.
+
+### List of neighbors
+
+Given a spatial polygons data frame we create a list of neighbors using the `poly2nb()` function from the **spdep** package.
+```{r}
+library(spdep)
+neighbors <- poly2nb(spdf)
+neighbors
+```
+
+The `nb` stands for neighbor list object. The function builds the list from regions based on contiguity. That is neighbors must share one or more boundary points.
+
+There are 360 polygons. Each polygon is bordered by at least three other polygons. The average number of neighbors is 7.4 out of possibility of 8. The total number of neighbors over all tracts is 2656. This represents 2% of all possible connections (if every polygon is a neighbor of itself and every other polygon 360 * 360).
+
+A graph of the links (network) is obtained as follows.
+```{r}
+plot(neighbors, coordinates(spdf))
+```
+
+The arguments include the neighbor list object and the location of the polygon centroids. Location of the centroids are extracted from the spatial object with the `coordinates()` function. The graph is a network displaying the contiguity pattern (topology).
+
+The number of links per node (tract)--link distribution--is obtained by typing
+```{r}
+summary(neighbors)
+``` 
+
+Four courner polygons each with three neighbors, 68 edges each with 5 neighbors, the rest with 8 neighbors (under queen contiguity).
+
+The list of neighboring tracts for the first two tracts.
+```{r}
+neighbors[[1]]; neighbors[[2]]
+```
+
+The first polygon (upper left) has three neighbors, cells 2 and 19 & 20. The neighbor numbers are stored as an integer vector.  The second polygon has five neighbors, cells 1, 3, 19, 20, & 21. 
+
+### Weights
+
+Before spatial autocorrelation is quantified the neighbor list object needs to be appended with weights specifying how much weight to give to each link.
+
+The function `nb2listw()` function turns the neighbors list object into a spatial weights object.
+```{r}
+wtsnbs <- nb2listw(neighbors, style = "B")
+class(wtsnbs)
+```
+
+The `wtsnbs` object is a list with two elements. The first element (`listw`) is the weights matrix and the second element (`nb`) is the neighbor list object.
+```{r}
+summary(wtsnbs)
+```
+
+The network statistics are given along with information about the weights. By default all neighboring polygons are assigned a weight of 1 (`style = "B"`). The sum over all weights (`S0`) is the number of nonzero links.
+
+To see the weights for the first two tracts type
+```{r}
+wtsnbs$weights[1:2]
+```
+
+This is a sparse representation of the spatial weights matrix. The full matrix would be 360 x 360.
+
+To see the neighbors of the first two tracts type
+```{r}
+wtsnbs$neighbours[1:2]
+```
+
+The first polygon has three neighbors each receiving a weight of one, etc.
+
+### Moran's I
+
+A commonly used autocorrelation statistic is Moran's I. Moran's I follows the basic form of spatial autocorrelation indexes described above where the similarity between regions i and j is defined as the product of deviations from the mean such that
+
+$\hbox{sim}_{ij} = [y_i - \bar y)] \times [y_j - \bar y)]$
+
+where $i$ indexes the region and $j$ indexes the neighbors of $i$. The value of $\hbox{sim}_{ij}$ is large when the $y$ values in the product are on the same side of the mean and small when they are on opposite sides of the mean.
+
+The formula for I is
+$$
+\hbox{I} = \frac{N} {\sum_{i} \sum_{j} w_{ij}} \frac {\sum_{i} \sum_{j} w_{ij}(Y_i-\bar Y) (Y_j-\bar Y)} {\sum_{i} (Y_i-\bar Y)^2}
+$$
+
+Here we let `m` be the number of polygons and `s` be the sum of the weights.
+```{r}
+m <- length(spdf$nT)
+s <- Szero(wtsnbs)
+moran(spdf$nT, listw = wtsnbs, n = m, S0 = s)
+```
+
+The function returns the Moran's I statistic and the kurtosis (K). Moran's I ranges from -1 to +1. Positive values of Moran's I indicate clustering and negative values indicate inhibition. The value of .2 for the tornado counts indicates fairly low spatial autocorrelation.
+
+Kurtosis is a statistic measuring the peakedness of the distribution of the attribute values. A normal distribution has a kurtosis of 3. If the kurtosis is too large or too small relative to a normal distribution then the inferences we make with Moran's I may not be valid.
+
+The large number of cells without tornadoes produces a extreme positive skewness. Peakedness is not a useful description of distributions that are highly skewed.
+
+Repeat using the values of cape and helicity.
+```{r}
+moran(spdf$cape, listw = wtsnbs, n = m, S0 = s)
+moran(spdf$hlcy, listw = wtsnbs, n = m, S0 = s)
+```
+
+The environmental variables have distributions closer to normal and there is large spatial autocorrelation.
+
+### Spatial lag
+
+Insight into spatial autocorrelation is obtained by noting that Moran's I is the slope coefficient from a regression of the weighted average of the neighborhood values onto the observed values. The weighted average of neighborhood values is called the spatial lag.
+
+Let `cape` be the set of cape values in each cell. We create a spatial lag variable using the `lag.listw()` function. The first argument is the `listw` object and the second is the vector of crime values. Here we use `style = "W"` for row standaridization.
+```{r}
+cape <- spdf$cape
+wtsnbs <- nb2listw(neighbors, style = "W")
+moran(spdf$cape, listw = wtsnbs, n = m, S0 = Szero(wtsnbs))
+Wcape <- lag.listw(wtsnbs, cape)
+```
+
+For each value in the vector cape there is a corresponding value in the vector object `Wcape` representing the average crime over the neighboring regions.
+
+A scatter plot of the neighborhood average cape versus the cape in each cell shows there is a very strong relationship.
+```{r}
+library(ggplot2)
+df2 <- data.frame(cape, Wcape)
+ggplot(df2, aes(x = cape, y = Wcape)) + 
+  geom_point() + 
+  geom_smooth(method = lm) +
+  xlab("CAPE (J/kg") + ylab("Spatial Lag of CAPE (J/kg)")
+```
+
+Cells with low values of cape are surrounded by cellss with low values of cape and cells with high values of cape tend be surrounded by cells with high values of cape. 
+
+The slope of the regression line is the value of Moran's I. To check this type
+```{r}
+lm(Wcape ~ cape)
+```
+
+Clusters of high (or low) values are found using a local version of Moran's I, which is computed at each cell (using the `MoranLocal()` function) so the result is a raster. In this case contiguity is used to define the neighborhood and to define the domain over which the local value of I is computed.
+```{r}
+nT.lm <- MoranLocal(nT.r)
+plot(nT.lm)
+```
+
+Compute the correlation between the number of tornadoes and the environmental parameters.
+```{r}
+cor(values(nT.r), values(cape.r))
+cor(values(nT.r), values(cin.r))
+cor(values(nT.r), values(hlcy.r))
+cor(values(cape.r), values(cin.r))
+cor(values(cape.r), values(hlcy.r))
+cor(values(cin.r), values(hlcy.r))
+cor(values(nT.r), abs(values(cape.r)) / abs(values(cin.r)))
+
+```
+
+Compute the local spatial autocorrelation between CAPE and CIN. The default neighborhood size is 5 x 5 cells. This is changed with the `ngb` argument.
+```{r}
+cc <- corLocal(cape.r, abs(cin.r))
+plot(cc)
+```
+
+Plot on a map.
+```{r}
+tm_shape(cape.r) +
+  tm_raster(title = "CAPE (J/kg)", n = 5) +
+tm_shape(counties) +
+  tm_borders(col = "grey") +
+tm_shape(states) +
+  tm_borders() +
+tm_shape(sfdfTll) +
+  tm_lines(lwd = 3, col = "black")
+```
+
+#Lesson 16
+# Spatial logistic regression
+
+Spatial logistic regression is a popular model for point pattern data. The study domain is divided into a grid of cells; each cell is assigned the value one if it contains at least one event, and zero otherwise. A logistic regression models the presence probability $p = P(Y = 1)$ as a function of explanatory variables $X$ in the form
+$$
+\log \frac{p}{1-p} = \beta X
+$$
+where the left-hand side is the logit (log of the odds ratio) and the $\beta$ are the coefficients to be determined.
+
+If your data are stored as `ppp` objects, a spatial logistic model can be fit directly using functions from the **spatstat** package.
+
+Let's start with a canned example from the package (a good strategy in general).
+
+### Example: Copper ore deposits
+
+Consider the locations of 57 copper ore deposits (events) and 146 line segments representing geological 'lineaments.' Lineaments are linear features, visible from space, that consist of geological faults. 
+
+It is of interest to be able to predict the probability of a copper ore from the lineament pattern. The data are stored as a list in `copper`. The list contains a `ppp` object for the ore deposits and a `psp` object for the lineaments.
+```{r}
+library(spatstat)
+data(copper) 
+plot(copper$SouthPoints)
+plot(copper$SouthLines, add = TRUE)
+```
+
+For plotting convenience we first rotate the events (points and lines) by 90 degrees in the anticlockwise direction and save them as separate objects.
+```{r}
+C <- rotate(copper$SouthPoints, pi/2)
+L <- rotate(copper$SouthLines, pi/2)
+plot(C)
+plot(L, add = TRUE)
+```
+
+The planar point pattern `C` is summarized as
+```{r}
+summary(C)
+```
+
+There are 57 ore deposits over a region of size 5584 sq. km resulting in an intensity of about .01 ore deposits per square km.
+
+Next we create a distance map of the lineaments to be used as a covariate.
+```{r}
+D <- distmap(L)
+plot(D)
+```
+
+Models are fit with the `slrm()` function from the **spatstat** package. 
+```{r}
+model <- slrm(C ~ D)
+model
+```
+
+The model says that the odds of a copper ore along a lineament (D = 0) is exp(-4.723) = .00888. This is slightly less than the overall intensity of .01.
+
+The model also says that for every one unit (one kilometer) increase in distance from a lineament the expected change in the log odds is .0781 [exp(.0781) = 1.0812] or an 8.1% increase in the odds. Ore deposits are more likely between the lineaments.
+
+The fitted method produces an image of the window giving the local probability of an ore deposit.
+```{r}
+plot(fitted(model))
+```
+
+Units are intensity per square kilometer. Integrating the predictions over the area equals the observed number of ore deposits.
+```{r}
+sum(fitted(model))
+```
+
+Methods for this class (`slrm`) include and the `step()` function can be used for model selection for a set of nested models.
+
+# Spatial regression
+
+Ordinary regression models fit to spatially aggregated data can lead to poor inference because observations are not independent. It's always necessary to check the residuals from a non-spatial model for spatial autocorrelation.
+
+If the residuals are correlated the model is misspecified. In that case we can try to improve the model by adding variables. If that's not possible (no additional data, or no clue as to what variable to include), we can try a spatial regression model. Spatial regression models are widely used in econometrics and epidemiology.
+
+### Spatial lag model and spatial error models
+
+The equation for a regression model in vector notation is
+$$
+y = X\beta + \varepsilon
+$$
+where $y$ is a $n \times 1$ vector of response variable values, $X$ is a $n$ $\times$ $p+1$ matrix containing the explanatory variables and augmented by a column of ones for the intercept term, $\beta$ is a $p+1$ $\times$ 1 vector of model coefficients and $\varepsilon$ is a $n \times 1$ vector of residuals (iid).
+
+If the elements of the vector $\varepsilon$ are spatially correlated, then two options exist. The first is to rewrite the model adding a spatial lag term as
+$$
+y = \rho W y + X\beta + \varepsilon
+$$
+where $Wy$ is the weighted average of the neighborhood response values with $W$ the spatial weights matrix, and $\rho$ is the autoregression coefficient. This is called a spatial autoregressive (SAR) model.
+
+Note this spatial lag term is exactly what we compute with the `poly2nb()` and `nb2listw()` functions and $\rho$ can be Moran's I.
+
+Application of the spatial lag model is motivated by a diffusion process. The response variable $y_i$ is influenced not only by the explanatory variables at location $i$ but also by explanatory variables at locations $j$.
+
+A second options is to rewrite the model by adding a spatial error term as
+$$
+y = X\beta + \lambda W \epsilon + u
+$$
+where $\lambda$ is the autoregression coefficient, $W\epsilon$ is the spatial error term representing the weighted average of the neighborhood disturbances, and $u$ are the residuals assumed to be iid. This is called a spatial error model (SEM).
+
+The difference is that the spatial lag is on the residuals rather than on the response variable.
+
+Application of the spatial error model is motivated by an omitted variable bias. Suppose the $y$ is statistically explained by two variables $x$ and $z$ centered on zero and independent. Then
+$$
+y = x\beta + z\theta
+$$
+If $z$ is not observed, the vector $z\theta$ is nested in the error term $\epsilon$.
+$$
+y = x\beta + \epsilon
+$$
+
+Examples of an unobserved latent variable $z$ could be local culture, social capital, neighborhood readiness. Importantly we would expect the latent variable to be spatially correlated (e.g., culture will be similar across contiguous neighborhoods), so let
+$$
+z = \lambda W z + r\\
+z = (I - \lambda W)^{-1} r
+$$
+where $r$ is a vector of random independent residuals, $W$ is the spatial weights matrix and $\lambda$ is a scalar spatial correlation parameter. Substituting back into the equation above
+$$
+y = x\beta + z\theta \\
+y = x\beta + (I - \lambda W)^{-1} \varepsilon
+$$
+where $\varepsilon = \theta r$.
+
+Another reason for fitting a spatial error model is spatial heterogeneity. Suppose we have multiple observations for each unit. If we want our model to incorporate individual effects we can include a $n \times 1$ vector $a$ of individual intercepts for each unit.
+$$
+y = a + X\beta
+$$
+
+In a cross-sectional setting with one observation per unit (typically the case), this approach is not possible since we will have more parameters than observations.
+
+Instead we can treat $a$ as a vector of spatial random effects. We assume that the intercepts follows a spatially smoothed process
+$$
+a = \lambda W a + \epsilon \\
+a = (I - \lambda W)^{-1} \epsilon
+$$
+which leads to the previous model
+$$
+y = X\beta + (I - \lambda W)^{-1} \epsilon
+$$
+
+# Continuity and stationarity (L18)
+
+* Kriging assumes the observed values are spatially homogeneous. This implies stationarity and continuity.
+* Stationarity means that the average difference in values between pairs of observations separated by a given distance (lag) is constant across the domain. 
+* Continuity means that the spatial autocorrelation depends only on the lag (and orientation) between observations. That is; spatial autocorrelation is independent of location.
+* Stationarity and continuity allow different parts of the domain to be treated as "independent" samples. 
+* Spatial autocorrelation is described by a single parametric function. 
+
+Stationarity can be weak or intrinsic. Both assume the mean of the difference in values at observations separated by a lag distance $h$ is zero. That is, E$[z_i - z_j]$ = 0, where location $i$ and location $j$ are a lag $h$ apart. This implies that the interpolated surface $Z(s)$ is a random function with a constant mean ($m$) and a residual ($\varepsilon$).
+$$
+Z(s) = m + \varepsilon(s).
+$$
+The expected value of the surface is $m$.
+
+Weak stationarity assumes the covariance is a function of the lag distance $h$.
+$$
+\hbox{cov}(z_i, z_j) = \hbox{cov}(h)
+$$
+where cov($h$) is called the covariogram.
+
+Intrinsic stationarity assumes the variance of the difference is a function of the lag: 
+$$
+\hbox{var}(z_i - z_j) = \gamma(h),
+$$
+where $\gamma(h)$ is called the variogram. This means that the variance of $Z$ is constant and that spatial correlation is independent of location.
+
+These assumptions are needed to get started with our statistical interpolation.
+
+### Covariogram and correlogram
+
+Our interest will be on a model for the variogram $\gamma(h)$. To help understand the variogram, consider first the covariogram. Let's start with a 4 x 6 map of surface air temperatures in degrees C. Only to simplify notation here the observations are on a regular grid.
+
+  21  21  20  19  18  19 
+  
+  26  25  26  27  29  28 
+  
+  32  33  34  35  30  28   
+  
+  34  35  35  36  32  31   
+
+Put the values into a numeric vector and determine the mean and variance.
+```{r}
+temps <- c(21, 21, 20, 19, 18, 19, 
+           26, 25, 26, 27, 29, 28, 
+           32, 33, 34, 35, 30, 28, 
+           34, 35, 35, 36, 32, 31)
+mean(temps); var(temps)
+```
+
+To start, let's focus only on the north-south direction. To compute the sample covariance function in this direction we first compute the covariance between the observed values one distance unit apart.
+
+Mathematically
+$$
+\hbox{cov}(0, 1) = 1/|N(1)| \sum (z_i - Z)(z_j - Z)
+$$
+where $|N(1)|$ is the number of distinct observation pairs with a distance separation of one unit in the north-south direction and where $Z$ is the average over all observations. Here we let zero in the cov(0, 1) refer to the direction and the one to the distance of one unit apart. Here $|N(1)|$ = 18.
+
+The equation for the covariance can be simplified to:
+$$
+\hbox{cov}(0, 1) = 1/|N(1)| \sum z_i z_j - m_{-1} m_{+1}
+$$
+where $m_{-1}$ is the average temperature over all rows except the first (northern most) and $m_{+1}$ is the average temperature over all rows except the last (southern most).
+
+To simplify the notation we re-index the grid of temperatures using lexicographic (reading) order.
+
+ 1   2   3   4   5   6
+ 
+ 7   8   9   10  11  12 
+ 
+ 13  14  15  16  17  18  
+  
+ 19  20  21  22  23  24 
+
+Then
+```{r}
+mp1 <- mean(temps[1:18])
+mm1 <- mean(temps[7:24])
+cc <- sum(temps[1:18] * temps[7:24])/18
+cc - mm1 * mp1
+```
+
+Or more generally
+```{r}
+N <- 18
+k <- 1:N
+1/N * sum(temps[k] * temps[k + 6]) - mean(temps[k]) * mean(temps[k + 6])
+```
+
+The covariance has units of the field variable squared (here $^\circ C^2$).
+
+We also have observation pairs two units of distance apart. So we compute the cov(0, 2) in a similar way. 
+$$
+\hbox{cov}(0, 2) = 1/|N(2)| \sum z_i z_j - m_{-2} m_{+2}
+$$
+where $m_{-2}$ is the average temperature over all rows except the first two and $m_{+2}$ is the average temperature over all rows except the last two. $|N(2)|$ is the number of pairs two units apart.
+```{r}
+N <- 12
+k <- 1:N
+1/N * sum(temps[k] * temps[k + 12]) - mean(temps[k]) * mean(temps[k + 12])
+```
+
+Similarly we have observation pairs three units apart so we compute cov(0, 3) as
+$$
+\hbox{cov}(0, 3) = 1/|N(3)| \sum z_i z_j - m_{-3} m_{+3}
+$$
+```{r}
+N <- 6
+k <- 1:N
+1/N * sum(temps[k] * temps[k + 18]) - mean(temps[k]) * mean(temps[k + 18])
+```
+
+There are no observation pairs four units apart in the north-south direction so we are finished. The covariogram is then a plot of the covariance values as a function of lagged distance. Let h be the lagged distance, then
+
+h      |  cov(h)  
+-------|--------  
+(0, 1) |  15  
+(0, 2) |   3  
+(0, 3) |   1  
+
+It is convenient to have a measure of co-variability that is dimensionless. This is obtained by dividing the covariance at lagged distance $h$ by the covariance at lag zero. This is the correlogram. Values of the correlogram range from 0 to +1.
+
+### Variogram
+
+The covariogram is a decreasing function of lag. The variogram is the multiplicative inverse of the covariogram. 
+
+Mathematically: var($z_i - z_j$) for locations i and j. The semi-variogram is 1/2 the variogram. If location i is near location j, the difference in the values will be small and so too will the variance of their differences, in general. If location i is far from location j, the difference in values will be large and so too will the variance of their differences.
+
+In practice we have a set of observations and we compute a variogram. We call this the sample (or empirical) variogram. Let $t_i = (x_i, y_i)$  be the ith location and $h_{i,j} = t_j - t_i$ be the vector connecting location $t_i$ with location $t_j$. Then the sample variogram is defined as
+$$
+\gamma(h) = \frac{1}{2N(h)} \sum^{N(h)} (z_i - z_j)^2
+$$
+where $N(h)$ is the number of observation pairs a distance of $h$ units apart.
+
+The variogram assumes intrinsic stationarity so the values need to be detrended first.
+
+The sample variogram is characterized by a set of points the values of which generally increase as $h$ increases before leveling off (reaching a plateau).
+
+### Terminology
+
+Let's begin with a plot with labels. Make sure the **geoR** package is installed. The code is done using the base graphics commands and the plot method from the package.
+```{r}
+library(geoR)
+plot(variog(s100, max.dist = 1), 
+     xlab = "Lagged Distance (h)",
+     ylab = expression(paste(gamma,"(h)")), 
+     las = 1, pch = 16)
+abline(h = 0)
+abline(h = .15, col = "red")
+arrows(0, 0, x1 = 0, y1 = .15, length = .1)
+text(0, y = .05, labels = "nugget", pos=4)
+abline(h = .9, col = "red")
+arrows(0, .15, x1 = 0, y1 = .9, length = .1)
+text(0, y = .8, labels="sill (partial sill)", pos=4)
+abline(v = .6, col = "red")
+arrows(0, 1, x1 = .6, y1 = 1, length = .1)
+text(.4, y = 1.04, labels = "range")
+```
+
+* Lag (lag distance): Relative distance between observation locations.
+* Nugget (nugget, nugget variance, or nugget effect): The height of the variogram at zero lag. The nugget is the variation in the values at the observation locations without regard to spatial variation. Related to the observation (or measurement) precision.
+* Sill: The height of the variogram at which the values are uncorrelated.
+* Relative nugget effect: The ratio of the nugget to the sill expressed as a percentage.
+* Range: The distance beyond which the values are uncorrelated. The range is indicated on the empirical variogram as the position along the horizontal axis where values of the variogram reach a constant height.
+
+Additional terms.
+* Isotropy: The condition in which spatial correlation is the same in all directions.
+* Anisotropy: (an-I-so-trop-y) spatial correlation is stronger or more persistent in some directions.
+* Directional variogram: Distance and direction are important in characterizing the spatial correlations. Otherwise the variogram is called omni-directional.
+* Azimuth ($\theta$): Defines the direction of the variogram in degrees.The azimuth is measured clockwise from north.
+* Lag spacing: The distance between successive lags is called the lag spacing or lag increment.
+* Lag tolerance: The distance allowable for observational pairs at a specified lag. With arbitrary observation locations there will be no observations exactly a lag distance from any observation. Lag tolerance provides a range of distances to be used for computing values of the variogram at a specified lag.
+
+# Kriging
+
+The final step is kriging. Kriging interpolates the observed data using the variogram model. It was developed by a South African miner (D.G. Krige) as a way to improve estimates of where ore reserves might be located. Extraction costs are reduced substantially if good predictions can be made of where the ore resides given samples taken across the mine.
+
+A kriged estimate is a weighted average of the observations where the weights are based on the variogram model. The kriged estimates are optimal in the sense that they minimize the error variance. The type of kriging depends on the characteristics of the observations and the purpose of interpolation.
+
+* Simple kriging assumes a known constant mean for the domain.  
+* Ordinary kriging assumes an unknown constant mean.  
+* Universal kriging assumes an unknown linear or nonlinear trend in the mean.  
+
+The steps are:
+
+1. Examine the observations for trends and isotropy.
+2. Construct an empirical variogram from your data.
+3. Determine an appropriate variogram model.
+4. Use the model together with your data to get an interpolated surface.
+
+# Example: April temperatures in the Midwest (L19)
+
+Let's consider another example. The data in `MidwestTemps.txt` are average temperatures in and around the state of Iowa for the month of April. The goal is a kriged spatial interpolation of these values onto a 56 by 35 grid.
+
+### Step 1: Examine the data for spatial trends and normality
+```{r}
+L <- "http://myweb.fsu.edu/jelsner/temp/data/MidwestTemps.txt"
+t.df <- read.table(L, header = TRUE)
+summary(t.df)
+```
+
+Map the values.
+```{r}
+library(maps)
+library(maptools)
+t.sdf <- t.df
+coordinates(t.sdf) <- ~ lon + lat
+sts <- map('state', plot = FALSE)
+sts <- map2SpatialLines(sts)
+
+tm_shape(t.sdf) +
+  tm_text(text = "temp", size = .6) +
+tm_shape(sts) +
+  tm_lines() 
+```
+
+Create a `geodata` object from the data frame.
+```{r}
+library(rgeos)
+library(geoR)
+t.gdf <- as.geodata(t.df)
+summary(t.gdf)
+plot(t.gdf)
+```
+
+The maximum pairwise distance is 11.5 degrees. There is a pronounced 1st order trend in the north/south direction as we might expect with air temperatures.
+
+Remove the trend and examine the residuals.
+```{r}
+plot(t.gdf, trend = "1st")
+```
+
+There is some evidence of a 2nd-order trend in the west-east direction. 
+```{r}
+plot(t.gdf, trend = "2nd")
+```
+
+By specifying a higher order trend, the lower order trends are taken care of. The distribution of residuals is approximately normal as we might expect. The data are monthly means.
+
+### Step 2: Compute empirical variograms
+
+Check for anisotropy by plotting directional variograms.
+```{r}
+par(mfrow = c(1, 1))
+plot(variog4(t.gdf, trend = "2nd", 
+             max.dist = 5.5), 
+     omni = TRUE, legend = FALSE)
+```
+
+There is no evidence of anisotropy.
+
+### Step 3: Fit a variogram model to the data
+
+Here we consider several likelihood fits to an exponential model and examine the AIC for final parameter selection. 
+
+The AIC is used as a selection criterion and is a function of the maximized likelihood function but includes a penalty for model complexity that favors simpler models. Recall the best fit has the largest log-likelihood and smallest AIC.  
+
+Set initial values for the sill and range. From the variograms start with 3 for the sill and 4 for the range.
+```{r}
+iv <- c(3, 4)  
+summary(likfit(t.gdf, 
+               ini = iv, 
+               cov.model = "exp", 
+               trend = "2nd",
+               fix.nug = TRUE, 
+               message = FALSE))$likelihood$AIC
+summary(likfit(t.gdf, 
+               ini = iv, 
+               cov.model = "exp", 
+               trend = "2nd",
+               fix.nug = FALSE, 
+               message = FALSE))$likelihood$AIC
+summary(likfit(t.gdf, ini = iv, 
+               cov.model = "sph", 
+               trend = "2nd",
+               fix.nug = TRUE, 
+               message = FALSE))$likelihood$AIC
+summary(likfit(t.gdf, ini = iv, 
+               cov.model = "sph", 
+               trend = "2nd",
+               fix.nug = FALSE, 
+               message = FALSE))$likelihood$AIC
+```
+
+It appears that a good variogram model would be on the residuals of a 2nd order trend using an exponential function with fixed nugget equal to zero. A spherical function with a nugget is also a reasonable model.
+
+To obtain the model parameters, type
+```{r}
+likfit(t.gdf, ini = iv, cov.model = "exp", 
+       trend = "2nd", fix.nug = TRUE)
+likfit(t.gdf, ini = iv, cov.model = "sph", 
+       trend = "2nd", fix.nug = FALSE)
+```
+
+Plot the competing models on the empirical variogram.
+```{r}
+plot(variog(t.gdf, trend = "2nd", 
+            uvec = seq(0, 5.5, l = 29)))
+lines.variomodel(cov.model = "exp", 
+                 cov.pars = c(2.114, .4139), 
+                 nug = 0, max.dist = 5.5, col = "red")
+lines.variomodel(cov.model = "sph", 
+                 cov.pars = c(1.638, 1.307),
+                 nug =.5, max.dist = 5.5, col = "green")
+```
+
+Save the models.
+```{r}
+modelE <- likfit(t.gdf, ini = iv, cov.model = "exp", 
+                  trend = "2nd", fix.nug = TRUE)
+modelS <- likfit(t.gdf, ini = iv, cov.model = "sph", 
+                  trend = "2nd", fix.nug = FALSE)
+```
+
+### Step 4: Create an interpolated surface
+
+We create a grid of locations at which we want the temperatures to be interpolated. Here we use the `expand.grid` function where the arguments are the sequence of longitudes and latitudes, respectively. We then use the `krige.conv()` function to interpolate the values to the grid. We save the interpolation in `kcE` when we use the exponential variogram model to weight the observations and save the interpolation in `kcS` when we use the spherical model to weight the observations.
+```{r}
+pred.grid <- expand.grid(seq(-99, -88, l = 224), 
+                        seq(38.4, 45.4, l = 136))
+kcE <- krige.conv(t.gdf, loc = pred.grid, 
+                 krige = krige.control(trend.d = "2nd", 
+                                       trend.l = "2nd",
+                                       obj.m = modelE))
+kcS <- krige.conv(t.gdf, loc = pred.grid,
+                 krige = krige.control(trend.d = "2nd", 
+                                       trend.l = "2nd",
+                                       obj.m = modelS))
+```
+
+Plot the interpolated surface generated using the exponential variogram. Use the `image` function then add the state boundaries using the `map` function and contours using the `contour` function.
+```{r}
+image(kcE, col = rev(heat.colors(20)), ylab = "", xlab = "")
+title(main="Exponential Model w/ Zero Nugget")
+map("state", add = TRUE, col = "grey")
+contour(kcE, add = TRUE, nlevel = 20)
+```
+
+Plot the interpolated surface generated using the spherical variogram.
+```{r}
+image(kcS, col = rev(heat.colors(20)), ylab = "", xlab = "")
+title(main="Spherical Model w/ Non-Zero Nugget")
+map("state", add = TRUE, col = "grey")
+contour(kcS, add = TRUE, nlevel = 20)
+```
+
+The model with a non-zero nugget is smoother. The greater the nugget relative to the sill (relative nugget effect), the smoother the interpolation.
+
+
+
+
+
+
+
 
 
 
