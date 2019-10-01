@@ -102,17 +102,59 @@ ggplot(BigDays.sfdfT, aes(x = log(ATP_TW))) +
   geom_bar(binwidth = 0.25)
 ```
 
-The `Exponential distribution` can be used to model the time between events in a continuous Poisson process. The events are independent and occur at a constant rate. It has two parameters: scale and threshold. 
+The `Exponential distribution` can be used to model the time between events in a continuous Poisson process. The events are independent and occur at a constant rate. It has two parameters: scale and threshold ($theta$). For a positive threshold parameter, the distribution is shifted to the right by a distance $theta$. 
 
+```{r}
+exponential <- as.data.frame(rexp(n = 1000, rate = 10))
+names(exponential) <- c("counts")
 
+ggplot(exponential, aes(x = counts)) +
+  geom_bar(binwidth = 0.01)
+```
 
+A `Normal Distribution` is a continuous distribution that is specified by the mean ($mu$) and the standard deviation ($sigma$). The mean is the peak or center of the bell-shaped curve and the standard deviation determines the spread of the distribution. Normal distributions are the most common because many things occur naturally in physical, biological, and social measurement situations. 
 
+```{r}
+normal <- as.data.frame(rnorm(n = 1000, mean = 0, sd = 1))
+names(normal) <- c("counts")
 
+ggplot(normal, aes(x = counts)) +
+  geom_bar(binwidth = 0.1)
 
+```
 
+A `t-distribution` is used to analyze the mean of an approximately normal population when the population standard deviation is unknown. You can use it to test if the population mean is different from the hypothesized mean. It is a  continuous distribution that is specified by the number of degrees of freedom. It is bell-shaped and similar to the normal distribution however it has thicker tails. 
 
+```{r}
+tdist <- as.data.frame(rt(n = 1000, df = 100))
+names(tdist) <- c("counts")
 
+ggplot(tdist, aes(x = counts)) +
+  geom_bar(binwidth = .1)
 
+```
+
+The `Gamma Distribution` is used to model continuous variables that are always positive and have skewed distributions. It has two parameters: shape ($alpha$) and scale ($beta$). It is related to the normal and exponential distributions. 
+
+```{r}
+gam <- as.data.frame(rgamma(n = 1000, shape = 2, rate = 4))
+names(gam) <- c("counts")
+
+ggplot(gam, aes(x = counts)) +
+  geom_bar(binwidth = 0.1)
+```
+
+The `Beta Distribution` is a family of continuous probability distributions parameterized by two positive shape paramters that appear as exponents of the random variable and control the shape of the distribution. It is described as a probability distribution of probabilities. It represents all possible values of a probability when we don't know what that probability is. Think of batting averages, the more you have the lower the average becomes and the more narrow the data fluctuation becomes. 
+
+```{r}
+beta <- as.data.frame(rbeta(n = 1000, shape1 = 3, shape2 = 5))
+#shape1: as it increases it shifts the peak to the right. 
+#shape2: adjusts the count range on the y-axis
+names(beta) <- c("counts")
+
+ggplot(beta, aes(x = counts)) +
+  geom_bar(binwidth = 0.01)
+```
 
 
 
