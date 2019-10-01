@@ -4,3 +4,120 @@ author: "Zoe Schroder"
 date: "9/22/2019"
 output: html_document
 ---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+```
+
+
+Distributions: 
+
+A distribution is a function that shows the possible values for a variable and how often they occur. It is considered the shape of the data and represents the counts of the data that fall in that column/bar graph.  
+
+```{r}
+load("BigDays.RData")
+```
+
+A discrete distribution is a statistical distribution that shows the probabilities of outcomes with finite values. It describes the probability of occurrence for discrete events. Discrete values can only take particular values. There may be infinite nubme rof those values, but each is distinct. It can be numeric like counts of things or categorical like yes or no. Whole numbers (integers) are discrete variables.  
+
+```{r}
+ggplot(BigDays.sfdfT, aes(x = Mo)) +
+  geom_bar()
+```
+
+A continuous distribution is built from outcomes that potentially have infinite measurable values. These data are not restricted to separate values. These values are always numeric. (i.e. Decimals)
+
+```{r}
+ggplot(BigDays.sfdfT, aes(x = avgCAPE)) +
+  geom_bar(binwidth = 50)
+```
+
+`Poisson distribution` is a discrete probability distribution. It expresses the probability of a number of events occurring within a specified period of time. It is used for independent events that occur over a constant period of time. The poisson distribution has one parameter $lambda$ which represents the mean and variance of the model. A variable follows a poisson distribution if: 
+
+1. Data are counts of events (only positive; no upper bound)
+2. Events are independent
+3. Average rate does not change over the time period of interest. 
+
+```{r}
+pois_big <- as.data.frame(rpois(n = 1000, lambda = 50))
+names(pois_big) <- c("counts")
+
+ggplot(pois_big, aes(x = counts)) +
+  geom_bar()
+
+pois_small <- as.data.frame(rpois(n = 1000, lambda = 1))
+names(pois_small) <- c("counts")
+
+ggplot(pois_small, aes(x = counts)) +
+  geom_bar(binwidth = 1)
+```
+
+
+The number of tornadoes follows a poisson distribution. 
+```{r}
+ggplot(BigDays.sfdfT, aes(x = nT)) +
+  geom_bar(binwidth = 1)
+```
+
+The `Binomial Distribution` is a discrete distribution that models the number of events in a fixed number of trials. Each trial has two possible outcomes and event is the outcome of interest from the trial. The binomial distribution is used when you are interested in the occurrence of an event and not its magnitude. It sets an upper limit on the count as the number of events you observe cannot be greater than the number of trials you perform. It is a binomial distribution if: 
+
+1. The number of trials is fixed
+2. Each trial is independent of the other trials
+3. Each trial has one of two outcomes: event or nonevent
+4. The probability of an event is the same for each trial. 
+
+When the number of trials is large, the binomial distribution can be reasonably approximated by the normal distribution. 
+
+n = 100, p = 0.5
+
+```{r}
+binomial <- as.data.frame(rbinom(n = 1000, size = 50, prob = 0.5), col.names = count)
+names(binomial) <- c("counts")
+
+ggplot(binomial, aes(x = counts)) +
+  geom_bar(binwidth = 1)
+```
+
+The `Lognormal Distribution` is used when the logarithm of the random variable is normally distributed. This is used only when the variables are positive values. It is a continuous distribution that is defined by its location and scale parameters. In total, it is characterized by 3 paramters of its location, scale, and threshold parameters. 
+
+```{r}
+lognormal <- as.data.frame(rlnorm(n = 1000, meanlog = 0, sdlog = 1))
+names(lognormal) <- c("counts")
+
+ggplot(lognormal, aes(x = counts)) +
+  geom_bar(binwidth = 0.5)
+
+ggplot(lognormal, aes(x = log(counts))) +
+  geom_bar(binwidth = 0.5)
+```
+
+
+Accumulate Tornado Power on big tornado days is an example of the lognormal distribution. 
+```{r}
+ggplot(BigDays.sfdfT, aes(x = ATP_TW)) +
+  geom_bar(binwidth = 2)
+
+ggplot(BigDays.sfdfT, aes(x = log(ATP_TW))) +
+  geom_bar(binwidth = 0.25)
+```
+
+The `Exponential distribution` can be used to model the time between events in a continuous Poisson process. The events are independent and occur at a constant rate. It has two parameters: scale and threshold. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
