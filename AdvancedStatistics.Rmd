@@ -6,8 +6,10 @@ output: html_document
 ---
 
 ```{r}
-library(ggplot2)
-library(dplyr)
+suppressMessages(library(ggplot2))
+suppressMessages(library(dplyr))
+suppressMessages(library(msme))
+suppressMessages(library(lme4))
 ```
 
 
@@ -181,13 +183,9 @@ ggplot(negbinom, aes(x = counts)) +
 
 To check for overdispersion, calculate the Pearson Chi-squared statistic on the fitted model. You should also plot the standardized deviance residuals. 
 ```{r}
-install.packages("msme")
-library(msme)
-
-
 BigDays.sfdfT$maxCAPEs <- scale(BigDays.sfdfT$maxCAPE)
 BigDays.sfdfT$maxBSs <- scale(BigDays.sfdfT$maxBS)
-library(lme4)
+
 model <- glm(nT ~ maxCAPEs + maxBSs, 
                     data = BigDays.sfdfT, 
                     family = "poisson")
@@ -218,6 +216,114 @@ overdisp_fun <- function(model) {
 }
 overdisp_fun(model)
 ```
+
+*Linear Mixed Effects Models*
+
+A mixed model is a linear model that includes both `Fixed` and `Random` effects in the same model. A fixed effect is a measure of the population level with the assumption that the $beta$ coefficient for each fixed effect is the same for all subjects. Fixed effects can be continuous or categorical. Variables are fixed when no matter where, how, or how many are sampled, you would have the same levels of the same variables. A random effect is not constant between all subjects and is a measure at the group level. It is an estimate of the variance of the effect. Random effects are categorical. Random effects do not remain fixed between samples and would change depending on increased sampling or a change in how the data was collected. Random effects can be nested or crossed. Nested random effects are when the each effect is impacted by the other (i.e. the observer assigns the test id). Crossed is when the random effect is not influenced by something else (i.e. genetic lineages from wasps). The syntax for a mixed model is: 
+$$
+Y = \alpha X +\beta Z + \epsilon
+$$
+where Y is the vector of observed values, $alpha$ is a vector of fixed parameters, $beta$ is a vector of random effect parameters ($B ~ N(0,G)$), $X$ is the Fixed Effects Design matrix, $Z$ is the Random Effects Design matrix, and $epsilon$ is the vector of residuals. 
+
+You should use a mixed model instead of a simple linear model when you have a viariable that describes your data sample as a subset as a subset of the data you have collected. Mixed models are used in situations where: 
+1. Incomplete information
+2. In cases with fewer treatment periods than treatments
+3. Analysis of multi-center trial
+4. Repeated measurements over time
+5. Familial data sets
+
+How do you find a probability distribution that best fits your data? 
+```{r}
+library(car)
+library(MASS)
+```
+
+Check out the plots generated using qqp. The y axis represents the observations and the x axis represents the quantiles modeled by the distribution. The solid red line represents a perfect distribution fit and the dashed red lines are the confidence intervals of the perfect distribution fit. You want to pick the distribution for which the largest number of observations falls between the dashed lines. In this case, that's the lognormal distribution, in which only one observation falls outside the dashed lines. Now, armed with the knowledge of which probability distribution fits best, I can try fitting a model.
+
+*NOTE: The negative binomial and gamma distributions can only handle positive numbers. The poisson distribution can only handle positive whole numbers. The binomial and poisson distributions are different from the others because they are discrete rather than continuous (they quantify distinct countable events or the probability of these events.)*
+
+`Normal`
+```{r}
+qqp(BigDays.sfdfT$nT, "norm")
+```
+
+`Log-Normal`
+```{r}
+qqp(BigDays.sfdfT$nT, "lnorm")
+```
+
+```{r}
+nbinom <- fitdistr(BigDays.sfdfT$nT, "Negative Binomial")
+qqp(BigDays.sfdfT$nT, "nbinom", size = nbinom$estimate[[1]], mu = nbinom$estimate[[2]])
+```
+
+`Poisson`
+```{r}
+pois <- fitdistr(BigDays.sfdfT$nT, "Poisson")
+qqp(BigDays.sfdfT$nT, "pois", lambda = pois$estimate)
+```
+
+`Gamma`
+```{r}
+gamma <- fitdistr(BigDays.sfdfT$nT, "gamma")
+qqp(BigDays.sfdfT$nT, "gamma", shape = gamma$estimate[[1]], rate = gamma$estimate[[2]])
+```
+
+```{r}
+BigDays.sfdfT$maxCAPEs <- scale(BigDays.sfdfT$maxCAPE)
+BigDays.sfdfT$maxBSs <- scale(BigDays.sfdfT$maxBS)
+BigDays.sfdfT$maxHLCYs <- scale(BigDays.sfdfT$maxHLCY)
+BigDays.sfdfT$minCINs <- scale(BigDays.sfdfT$minCIN)
+
+model <-  lmer(nT ~ maxCAPEs + maxBSs + maxHLCYs + minCINs + (1 | Mo),
+               data = BigDays.sfdfT)
+summary(model)
+```
+
+The estimate of the variance explained by the random effect needs to be distinguishable from 0 else the random effect has no effect on the model. To get p-values for your model: 
+
+```{r}
+Anova(model)
+```
+
+
+```{r}
+model_pois <- glmer(nT ~ maxCAPEs + maxBSs + maxHLCYs + minCINs + (1 | Mo),
+               data = BigDays.sfdfT,
+               family = "poisson")
+summary(model_pois)
+```
+
+Consider overdispersion...this occurs when the combined residuals are much larger than the residual degrees of freedom. 
+
+```{r}
+overdisp_fun <- function(model) {
+    ## number of variance parameters in an n-by-n variance-covariance matrix
+    vpars <- function(m) {
+        nrow(m) * (nrow(m) + 1)/2
+    }
+    # The next two lines calculate the residual degrees of freedom
+    model.df <- sum(sapply(VarCorr(model), vpars)) + length(fixef(model))
+    rdf <- nrow(model.frame(model)) - model.df
+    # extracts the Pearson residuals
+    rp <- residuals(model, type = "pearson")
+    Pearson.chisq <- sum(rp^2)
+    prat <- Pearson.chisq/rdf
+    # Generates a p-value. If less than 0.05, the data are overdispersed.
+    pval <- pchisq(Pearson.chisq, df = rdf, lower.tail = FALSE)
+    c(chisq = Pearson.chisq, ratio = prat, rdf = rdf, p = pval)
+}
+
+overdisp_fun(model_pois)
+```
+*NOTE: You can model overdispersion as a random effect with one random effect level for each observation. As an example, using a unique ID for each event as a random effect would work.*
+
+
+
+
+
+
+
 
 
 
