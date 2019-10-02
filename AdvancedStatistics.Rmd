@@ -11,7 +11,7 @@ library(dplyr)
 ```
 
 
-Distributions: 
+*Distributions: *
 
 A distribution is a function that shows the possible values for a variable and how often they occur. It is considered the shape of the data and represents the counts of the data that fall in that column/bar graph.  
 
@@ -156,7 +156,68 @@ ggplot(beta, aes(x = counts)) +
   geom_bar(binwidth = 0.01)
 ```
 
+The `Negative Binomial Distribution` is a discrete probability distribution counts the number of failures until a fixed number of successes. It is a draw with replacement. It is characterized by: 
 
+1. experiment consists of x repeated trials
+each trial has two possible outcomes
+3. The probability of success is the same in every trial
+4. The trials are inndependent
+5. The experiment continues until a certain number (x) of successes are observed
+
+Has two parameters: lambda and one that adjusts the variance independently from the mean (corrects overdispersion). 
+
+```{r}
+negbinom <- as.data.frame(rnbinom(n = 1000, size = 1, mu = 5))
+names(negbinom) <- c("counts")
+
+ggplot(negbinom, aes(x = counts)) +
+  geom_bar(binwidth = 1)
+```
+
+
+
+
+
+
+To check for overdispersion, calculate the Pearson Chi-squared statistic on the fitted model. You should also plot the standardized deviance residuals. 
+```{r}
+install.packages("msme")
+library(msme)
+
+
+BigDays.sfdfT$maxCAPEs <- scale(BigDays.sfdfT$maxCAPE)
+BigDays.sfdfT$maxBSs <- scale(BigDays.sfdfT$maxBS)
+library(lme4)
+model <- glm(nT ~ maxCAPEs + maxBSs, 
+                    data = BigDays.sfdfT, 
+                    family = "poisson")
+
+summary(model)
+
+#Values greater than 1 indicate model over dispersion. Less than 1 indicate under-dispersion
+P__disp(model) 
+
+plot(rstandard(model))
+#a good fitting model will have the points between -2 and 2
+
+model <- glmer(nT ~ maxCAPEs + maxBSs + (1 | Mo), 
+                    data = BigDays.sfdfT, 
+                    family = poisson)
+
+# overdispersion = deviance / residual degrees of freedom
+summary(model)$sigma
+deviance(model) / df.residual(model)
+
+overdisp_fun <- function(model) {
+    rdf <- df.residual(model)
+    rp <- residuals(model,type="pearson")
+    Pearson.chisq <- sum(rp^2)
+    prat <- Pearson.chisq/rdf
+    pval <- pchisq(Pearson.chisq, df=rdf, lower.tail=FALSE)
+    c(chisq=Pearson.chisq,ratio=prat,rdf=rdf,p=pval)
+}
+overdisp_fun(model)
+```
 
 
 
