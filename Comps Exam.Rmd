@@ -1,0 +1,148 @@
+---
+title: "CompsExam"
+author: "Zoe Schroder"
+date: "10/6/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Appendicular lean mass (ALMM) is the dependent variable (y). I want to determine how it is affected by Hormone Replacement Theory (HRT). It should control for body mass index, ethnicity, smoking, age, and/or years since menopause (`These are all explanatory variables`). Your random effects are nested effects with the patient in the same center (Patient | Center). This makes it a *varying slopes and intercepts model*. 
+
+```{r}
+suppressMessages(library(lme4))
+suppressMessages(library(xtable))
+```
+
+Load the Women's Health Initiative Data set: 
+```{r}
+load("WHI.RData")
+```
+
+You are going to want to use the long version of the dataset (`WHI.long`). Each person was seen a total of 3 times to calculate the appendicular lean mass (ALMM) and the body mass index (BMI). Therefore, the ID is a random effect. CCR is the center at which the patient visited. It is also a random effect. Should visit also be a random effect? 
+
+
+```{r}
+hist(WHI.long$ALMM)
+mean(WHI.long$ALMM, na.rm = TRUE)
+max(WHI.long$ALMM, na.rm = TRUE)
+range(WHI.long$ALMM, na.rm = TRUE)
+```
+
+```{r}
+mean(log(WHI.long$ALMM), na.rm = TRUE)
+ggplot(WHI.long, aes(x = log(ALMM))) +
+  geom_bar(binwidth = 0.01)
+```
+
+Fit a model: 
+
+```{r}
+m1 <- lmer(log(ALMM) ~ 1 + (1 | id),
+               data = WHI.long)
+summary(m1)
+
+m2 <- lmer(log(ALMM) ~ 1 + (1 | ccr),
+               data = WHI.long)
+summary(m2)
+# This model has a ccr with a variance explained of almost 0. 
+
+m3 <- lmer(log(ALMM) ~ 1 + (1 | ccr/id) ,
+               data = WHI.long)
+summary(m3)
+
+AIC(m1, m2, m3)
+```
+
+This model has a nested random effect because the patient (`id`) is nested within the center that the tests were conducted (`ccr`)
+
+```{r}
+model1 <- lmer(log(ALMM) ~ BMI + agecat + ethn + smoking + as.factor(tothstat) + yrsmeno + (1 | ccr/id),
+                          data = WHI.long)
+summary(model1)
+
+model2 <- lmer(log(ALMM) ~ BMI + ethn + smoking + as.factor(tothstat) + agecat * yrsmeno + (1 | ccr/id),
+                          data = WHI.long)
+summary(model2)
+
+AIC(model1, model2)
+```
+
+```{r}
+x = summary(model1)
+xtable(x$coefficients, digits = 3)
+
+(exp(fixef(model1))-1) * 100
+```
+
+ALMM is 14.75 \% higher in Blacks, 5.9 \% low in Hispanics,4.98 \% lower in Indians, and 0.6\% lower in other ethnicities relative to Caucasians. Compared to patients ages 50 to 59, ALMM decreases by 2.56\% in patients aged 60 to 69 and 5.6\% in patients ages 70 - 79. ALMM increases by 2.3\% for past smokers and 0.79\% for current smokers relative to patients who have never smoked. Relative to patients who have never used HRT, ALMM decreases by 0.54\% for past users and 2.03\% for current users. 
+
+Sidenote: B2 is then the average difference in Y between the category for which X2 = 0 (the reference group) and the category for which X2 = 1 (the comparison group).
+
+```{r}
+confint(model1)
+```
+
+Check for normal residuals. 
+```{r}
+plot(model1) # This shows constant variance across the fitted range of values. 
+qqnorm(resid(model1)) # Check for normality of the residuals. Not bad. The tails are a slightly wavy.
+```
+
+```{r}
+modelresid <- as.data.frame(as.numeric(residuals(model2)))
+names(modelresid) <- c("Residuals")
+preALMM <- as.data.frame(exp(predict(model2)))
+names(preALMM) <- c("predictedALMM")
+
+dat <- cbind(modelresid, preALMM)
+
+p1 <- ggplot(modelresid, aes(x = Residuals)) +
+  geom_histogram(binwidth = .02, color = "white", fill = "gray40") +
+  xlab("Standardized Residual") + ylab("Frequency") +
+  ggtitle("A") +
+  theme_minimal() + theme(text = element_text(size=15))
+
+p2 <- ggplot(dat, aes(x = predictedALMM, y = Residuals)) +
+         geom_point(size = 3,
+                    alpha = 0.2) +
+         scale_x_log10() +
+         scale_color_discrete(name = "Month") +
+  xlab("Predicted ALMM") + ylab("Standardized Residual") +
+  ggtitle("B") +
+  theme_minimal() + theme(text = element_text(size=15))
+grid.arrange(p1, p2, ncol = 2)
+```
+
+
+```{r}
+newdat = data.frame(BMI = WHI.long$BMI, 
+                     agecat = WHI.long$agecat,
+                     ethn  = WHI.long$ethn,
+                     smoking = WHI.long$smoking,  
+                     tothstat = WHI.long$tothstat,
+                     yrsmeno = WHI.long$yrsmeno)
+pre1 <- predict(model1, re.form = NA, newdata = newdat)
+
+dat = cbind(WHI.long, pre1)
+
+dat <- na.omit(dat)
+cor(dat$ALMM, dat$pre1)
+```
+
+```{r}
+ggplot() +
+  geom_point(data = dat, 
+             aes(x = ALMM, 
+                 y = exp(pre1)), 
+             size = 4, 
+             show.legend = FALSE,  
+             stroke = 0, 
+             alpha = 0.2) +
+  geom_abline(slope = 1, 
+              size = 1.25)+ 
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 5)) +
+  ylab("Predicted Values") + xlab("Observed ALMM [kg]") + theme_minimal()
+```
+
